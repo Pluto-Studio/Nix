@@ -1,8 +1,62 @@
-# Ignore Gradle project-specific cache directory
-.gradle
+# JVM crash related
+core.*
+hs_err_pid*
 
-# Ignore Gradle build output directory
-build
+# Intellij
+/.idea/*
+!/.idea/runConfigurations
+!/.idea/icon.svg
+*.iml
+*.ipr
+*.iws
+out/
 
-# Ignore InteliJ IDEA project settings directory
-.idea
+# Eclipse
+.classpath
+.project
+.settings/
+
+# netbeans
+nbproject/
+nbactions.xml
+
+# Gradle
+!gradle-wrapper.jar
+.gradle/
+build/
+*/build/
+
+# we use maven!
+build.xml
+
+# Maven
+log/
+target/
+dependency-reduced-pom.xml
+
+# various other potential build files
+build/
+bin/
+dist/
+manifest.mf
+
+# Mac
+.DS_Store/
+.DS_Store
+
+# vim
+.*.sw[a-p]
+
+# Linux temp files
+*~
+
+# other stuff
+/run
+
+/nix-server/build.gradle.kts
+/nix-server/src/minecraft
+/paper-server
+/nix-api/build.gradle.kts
+/paper-api
+*.jar
+test-plugin.settings.gradle.kts
