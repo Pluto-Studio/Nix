@@ -18,14 +18,14 @@ index 6ee39b534b8d992655bc0cef3c299d12cbae0034..d9f1fbef27e00e1aa46ae96c6d7e87b8
                  .completer(new ConsoleCommandCompleter(this.server))
                  .option(LineReader.Option.COMPLETE_IN_WORD, true);
 diff --git a/src/main/java/io/papermc/paper/ServerBuildInfoImpl.java b/src/main/java/io/papermc/paper/ServerBuildInfoImpl.java
-index 74ffdc823e66fc5ec027c4b7c462382bcbfe2be2..7eea795cabc68f046ebbd646e068778c70c33f60 100644
+index 74ffdc823e66fc5ec027c4b7c462382bcbfe2be2..f13027d7de6387ebdb58443d8f85a3b5c19418c2 100644
 --- a/src/main/java/io/papermc/paper/ServerBuildInfoImpl.java
 +++ b/src/main/java/io/papermc/paper/ServerBuildInfoImpl.java
 @@ -31,6 +31,7 @@ public record ServerBuildInfoImpl(
      private static final String ATTRIBUTE_GIT_COMMIT = "Git-Commit";
  
      private static final String BRAND_PAPER_NAME = "Paper";
-+    private static final String BRAND_NIX_NAME = "NIX"; // Nix - Rebrand
++    private static final String BRAND_NIX_NAME = "Nix"; // Nix - Rebrand
  
      private static final String BUILD_DEV = "DEV";
  
