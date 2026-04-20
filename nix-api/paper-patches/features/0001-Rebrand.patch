@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nostalfinals <yuu8583@proton.me>
+Date: Mon, 20 Apr 2026 23:12:58 +0800
+Subject: [PATCH] Rebrand
+
+
+diff --git a/src/main/java/io/papermc/paper/ServerBuildInfo.java b/src/main/java/io/papermc/paper/ServerBuildInfo.java
+index 652ff54e7c50412503725d628bfe72ed03059790..9dbd24f89b0ce51703ef602a83f7799b93790659 100644
+--- a/src/main/java/io/papermc/paper/ServerBuildInfo.java
++++ b/src/main/java/io/papermc/paper/ServerBuildInfo.java
+@@ -19,6 +19,13 @@ public interface ServerBuildInfo {
+      */
+     Key BRAND_PAPER_ID = Key.key("papermc", "paper");
+ 
++    // Nix start - Rebrand
++    /**
++     * The brand id for Paper.
++     */
++    Key BRAND_NIX_ID = Key.key("plutoproject", "nix");
++    // Nix end - Rebrand
++
+     /**
+      * Gets the {@code ServerBuildInfo}.
+      *
