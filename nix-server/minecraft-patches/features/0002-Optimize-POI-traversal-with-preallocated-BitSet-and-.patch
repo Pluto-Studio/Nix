@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nostalfinals <yuu8583@proton.me>
+Date: Tue, 21 Apr 2026 09:56:39 +0800
+Subject: [PATCH] Optimize POI traversal with preallocated BitSet and queue
+
+
+diff --git a/ca/spottedleaf/moonrise/patches/poi_lookup/PoiAccess.java b/ca/spottedleaf/moonrise/patches/poi_lookup/PoiAccess.java
+index 85d80b3952a76b0ca7f67401a659cf35dd55b082..8d287a1b143037fbf7c97ce8614f82e38c558824 100644
+--- a/ca/spottedleaf/moonrise/patches/poi_lookup/PoiAccess.java
++++ b/ca/spottedleaf/moonrise/patches/poi_lookup/PoiAccess.java
+@@ -111,14 +111,24 @@ public final class PoiAccess {
+         final int upperY = WorldUtil.getMaxSection(poiStorage.levelHeightAccessor);
+         final int upperZ = Mth.floor(sourcePosition.getZ() + range) >> 4;
+ 
++        // Nix start - Optimize POI traversal with preallocated BitSet and queue
++        final int sizeX = (upperX - lowerX + 1);
++        final int sizeY = (upperY - lowerY + 1);
++        final int sizeZ = (upperZ - lowerZ + 1);
++        final int size = sizeX * sizeY * sizeZ;
++        // Nix end - Optimize POI traversal with preallocated BitSet and queue
++
+         final int centerX = sourcePosition.getX() >> 4;
+         final int centerY = Mth.clamp(sourcePosition.getY() >> 4, lowerY, upperY);
+         final int centerZ = sourcePosition.getZ() >> 4;
+         final long centerKey = CoordinateUtils.getChunkSectionKey(centerX, centerY, centerZ);
+ 
+-        final LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
+-        final LongOpenHashSet seen = new LongOpenHashSet();
+-        seen.add(centerKey);
++        // Nix start - Optimize POI traversal with preallocated BitSet and queue
++        final LongArrayFIFOQueue queue = new LongArrayFIFOQueue(size);
++        final java.util.BitSet seen = new java.util.BitSet(size);
++        final int centerIndex = (centerX - lowerX) * sizeY * sizeZ + (centerY - lowerY) * sizeZ + (centerZ - lowerZ);
++        // Nix end - Optimize POI traversal with preallocated BitSet and queue
++        seen.set(centerIndex);
+         queue.enqueue(centerKey);
+ 
+         while (!queue.isEmpty()) {
+@@ -160,9 +170,19 @@ public final class PoiAccess {
+                         final int neighbourZ = sectionZ + dz;
+ 
+                         final long neighbourKey = CoordinateUtils.getChunkSectionKey(neighbourX, neighbourY, neighbourZ);
+-                        if (seen.add(neighbourKey)) {
++                        // Nix start - Optimize POI traversal with preallocated BitSet and queue
++                        // BitSet index cannot be negative
++                        if (neighbourX < lowerX || neighbourX > upperX
++                                || neighbourY < lowerY || neighbourY > upperY
++                                || neighbourZ < lowerZ || neighbourZ > upperZ) {
++                            continue;
++                        }
++                        final int neighbourIndex = (neighbourX - lowerX) * sizeY * sizeZ + (neighbourY - lowerY) * sizeZ + (neighbourZ - lowerZ);
++                        if (!seen.get(neighbourIndex)) {
++                            seen.set(neighbourIndex);
+                             queue.enqueue(neighbourKey);
+                         }
++                        // Nix end - Optimize POI traversal with preallocated BitSet and queue
+                     }
+                 }
+             }
+@@ -354,14 +374,24 @@ public final class PoiAccess {
+         final int upperY = WorldUtil.getMaxSection(poiStorage.levelHeightAccessor);
+         final int upperZ = Mth.floor(sourcePosition.getZ() + range) >> 4;
+ 
++        // Nix start - Optimize POI traversal with preallocated BitSet and queue
++        final int sizeX = (upperX - lowerX + 1);
++        final int sizeY = (upperY - lowerY + 1);
++        final int sizeZ = (upperZ - lowerZ + 1);
++        final int size = sizeX * sizeY * sizeZ;
++        // Nix end - Optimize POI traversal with preallocated BitSet and queue
++
+         final int centerX = sourcePosition.getX() >> 4;
+         final int centerY = Mth.clamp(sourcePosition.getY() >> 4, lowerY, upperY);
+         final int centerZ = sourcePosition.getZ() >> 4;
+         final long centerKey = CoordinateUtils.getChunkSectionKey(centerX, centerY, centerZ);
+ 
+-        final LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
+-        final LongOpenHashSet seen = new LongOpenHashSet();
+-        seen.add(centerKey);
++        // Nix start - Optimize POI traversal with preallocated BitSet and queue
++        final LongArrayFIFOQueue queue = new LongArrayFIFOQueue(size);
++        final java.util.BitSet seen = new java.util.BitSet(size);
++        final int centerIndex = (centerX - lowerX) * sizeY * sizeZ + (centerY - lowerY) * sizeZ + (centerZ - lowerZ);
++        // Nix end - Optimize POI traversal with preallocated BitSet and queue
++        seen.set(centerIndex);
+         queue.enqueue(centerKey);
+ 
+         while (!queue.isEmpty()) {
+@@ -404,9 +434,19 @@ public final class PoiAccess {
+                         final int neighbourZ = sectionZ + dz;
+ 
+                         final long neighbourKey = CoordinateUtils.getChunkSectionKey(neighbourX, neighbourY, neighbourZ);
+-                        if (seen.add(neighbourKey)) {
++                        // Nix start - Optimize POI traversal with preallocated BitSet and queue
++                        // BitSet index cannot be negative
++                        if (neighbourX < lowerX || neighbourX > upperX
++                                || neighbourY < lowerY || neighbourY > upperY
++                                || neighbourZ < lowerZ || neighbourZ > upperZ) {
++                            continue;
++                        }
++                        final int neighbourIndex = (neighbourX - lowerX) * sizeY * sizeZ + (neighbourY - lowerY) * sizeZ + (neighbourZ - lowerZ);
++                        if (!seen.get(neighbourIndex)) {
++                            seen.set(neighbourIndex);
+                             queue.enqueue(neighbourKey);
+                         }
++                        // Nix end - Optimize POI traversal with preallocated BitSet and queue
+                     }
+                 }
+             }
