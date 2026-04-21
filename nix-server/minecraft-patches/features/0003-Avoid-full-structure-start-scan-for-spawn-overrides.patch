@@ -4,8 +4,10 @@ Date: Wed, 22 Apr 2026 00:02:20 +0800
 Subject: [PATCH] Avoid full structure start scan for spawn overrides
 
 Short-circuit structure spawn override checks once any valid referenced start matches the queried position instead of scanning every referenced structure-start chunk.
+Replace the MutableBoolean + fillStartsForStructure walk with a boolean helper in StructureManager that returns on the first match.
 
-Replace the MutableBoolean + fillStartsForStructure walk with a boolean helper in StructureManager that returns on the first match. This is not strictly behaviourally equivalent, since the old code would continue touching remaining STRUCTURE_STARTS chunks and warm StructureCheck state as an incidental side effect, but the actual spawn override decision only depends on whether any matching start exists, so the selected mob list remains unchanged while avoiding unnecessary chunk work on this hot path.
+This is not strictly behaviourally equivalent, since the old code would continue touching remaining STRUCTURE_STARTS chunks and warm StructureCheck state as an incidental side effect,
+but the actual spawn override decision only depends on whether any matching start exists, so the selected mob list remains unchanged while avoiding unnecessary chunk work on this hot path.
 
 diff --git a/net/minecraft/world/level/StructureManager.java b/net/minecraft/world/level/StructureManager.java
 index a8f00da4d5c7cca9b6948d7c2d5114f84fdacc00..df0d8083c5b6477ff3b3f170ebed78330a84ce21 100644
