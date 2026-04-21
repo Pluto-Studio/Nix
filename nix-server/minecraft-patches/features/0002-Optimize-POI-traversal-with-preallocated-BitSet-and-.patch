@@ -3,12 +3,16 @@ From: nostalfinals <yuu8583@proton.me>
 Date: Tue, 21 Apr 2026 09:56:39 +0800
 Subject: [PATCH] Optimize POI traversal with preallocated BitSet and queue
 
+Preallocate the POI traversal visited set and queue storage to avoid repeated queue growth/shrink reallocations during BFS.
+
+Replace the visited LongOpenHashSet with a BitSet and switch the queue walk to a preallocated LongArrayList with a head index.
+This preserves the existing traversal/return behaviour while reducing temporary allocations and System.arraycopy overhead on hot villager POI lookups.
 
 diff --git a/ca/spottedleaf/moonrise/patches/poi_lookup/PoiAccess.java b/ca/spottedleaf/moonrise/patches/poi_lookup/PoiAccess.java
-index 85d80b3952a76b0ca7f67401a659cf35dd55b082..8d287a1b143037fbf7c97ce8614f82e38c558824 100644
+index 85d80b3952a76b0ca7f67401a659cf35dd55b082..a2d31a5dc101d9f6de2503518460fa98246c0d33 100644
 --- a/ca/spottedleaf/moonrise/patches/poi_lookup/PoiAccess.java
 +++ b/ca/spottedleaf/moonrise/patches/poi_lookup/PoiAccess.java
-@@ -111,14 +111,24 @@ public final class PoiAccess {
+@@ -111,18 +111,28 @@ public final class PoiAccess {
          final int upperY = WorldUtil.getMaxSection(poiStorage.levelHeightAccessor);
          final int upperZ = Mth.floor(sourcePosition.getZ() + range) >> 4;
  
@@ -27,20 +31,28 @@ index 85d80b3952a76b0ca7f67401a659cf35dd55b082..8d287a1b143037fbf7c97ce8614f82e3
 -        final LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
 -        final LongOpenHashSet seen = new LongOpenHashSet();
 -        seen.add(centerKey);
+-        queue.enqueue(centerKey);
 +        // Nix start - Optimize POI traversal with preallocated BitSet and queue
-+        final LongArrayFIFOQueue queue = new LongArrayFIFOQueue(size);
++        final it.unimi.dsi.fastutil.longs.LongArrayList queue = new it.unimi.dsi.fastutil.longs.LongArrayList(size);
 +        final java.util.BitSet seen = new java.util.BitSet(size);
 +        final int centerIndex = (centerX - lowerX) * sizeY * sizeZ + (centerY - lowerY) * sizeZ + (centerZ - lowerZ);
-+        // Nix end - Optimize POI traversal with preallocated BitSet and queue
 +        seen.set(centerIndex);
-         queue.enqueue(centerKey);
++        queue.add(centerKey);
++        // Nix end - Optimize POI traversal with preallocated BitSet and queue
  
-         while (!queue.isEmpty()) {
+-        while (!queue.isEmpty()) {
+-            final long key = queue.dequeueLong();
++        for (int head = 0; head < queue.size(); head++) { // Nix - Optimize POI traversal with preallocated BitSet and queue
++            final long key = queue.getLong(head);
+             final int sectionX = CoordinateUtils.getChunkSectionX(key);
+             final int sectionY = CoordinateUtils.getChunkSectionY(key);
+             final int sectionZ = CoordinateUtils.getChunkSectionZ(key);
 @@ -160,9 +170,19 @@ public final class PoiAccess {
                          final int neighbourZ = sectionZ + dz;
  
                          final long neighbourKey = CoordinateUtils.getChunkSectionKey(neighbourX, neighbourY, neighbourZ);
 -                        if (seen.add(neighbourKey)) {
+-                            queue.enqueue(neighbourKey);
 +                        // Nix start - Optimize POI traversal with preallocated BitSet and queue
 +                        // BitSet index cannot be negative
 +                        if (neighbourX < lowerX || neighbourX > upperX
@@ -51,13 +63,13 @@ index 85d80b3952a76b0ca7f67401a659cf35dd55b082..8d287a1b143037fbf7c97ce8614f82e3
 +                        final int neighbourIndex = (neighbourX - lowerX) * sizeY * sizeZ + (neighbourY - lowerY) * sizeZ + (neighbourZ - lowerZ);
 +                        if (!seen.get(neighbourIndex)) {
 +                            seen.set(neighbourIndex);
-                             queue.enqueue(neighbourKey);
++                            queue.add(neighbourKey);
                          }
 +                        // Nix end - Optimize POI traversal with preallocated BitSet and queue
                      }
                  }
              }
-@@ -354,14 +374,24 @@ public final class PoiAccess {
+@@ -354,18 +374,28 @@ public final class PoiAccess {
          final int upperY = WorldUtil.getMaxSection(poiStorage.levelHeightAccessor);
          final int upperZ = Mth.floor(sourcePosition.getZ() + range) >> 4;
  
@@ -76,20 +88,28 @@ index 85d80b3952a76b0ca7f67401a659cf35dd55b082..8d287a1b143037fbf7c97ce8614f82e3
 -        final LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
 -        final LongOpenHashSet seen = new LongOpenHashSet();
 -        seen.add(centerKey);
+-        queue.enqueue(centerKey);
 +        // Nix start - Optimize POI traversal with preallocated BitSet and queue
-+        final LongArrayFIFOQueue queue = new LongArrayFIFOQueue(size);
++        final it.unimi.dsi.fastutil.longs.LongArrayList queue = new it.unimi.dsi.fastutil.longs.LongArrayList(size);
 +        final java.util.BitSet seen = new java.util.BitSet(size);
 +        final int centerIndex = (centerX - lowerX) * sizeY * sizeZ + (centerY - lowerY) * sizeZ + (centerZ - lowerZ);
-+        // Nix end - Optimize POI traversal with preallocated BitSet and queue
 +        seen.set(centerIndex);
-         queue.enqueue(centerKey);
++        queue.add(centerKey);
++        // Nix end - Optimize POI traversal with preallocated BitSet and queue
  
-         while (!queue.isEmpty()) {
+-        while (!queue.isEmpty()) {
+-            final long key = queue.dequeueLong();
++        for (int head = 0; head < queue.size(); head++) { // Nix - Optimize POI traversal with preallocated BitSet and queue
++            final long key = queue.getLong(head);
+             final int sectionX = CoordinateUtils.getChunkSectionX(key);
+             final int sectionY = CoordinateUtils.getChunkSectionY(key);
+             final int sectionZ = CoordinateUtils.getChunkSectionZ(key);
 @@ -404,9 +434,19 @@ public final class PoiAccess {
                          final int neighbourZ = sectionZ + dz;
  
                          final long neighbourKey = CoordinateUtils.getChunkSectionKey(neighbourX, neighbourY, neighbourZ);
 -                        if (seen.add(neighbourKey)) {
+-                            queue.enqueue(neighbourKey);
 +                        // Nix start - Optimize POI traversal with preallocated BitSet and queue
 +                        // BitSet index cannot be negative
 +                        if (neighbourX < lowerX || neighbourX > upperX
@@ -100,7 +120,7 @@ index 85d80b3952a76b0ca7f67401a659cf35dd55b082..8d287a1b143037fbf7c97ce8614f82e3
 +                        final int neighbourIndex = (neighbourX - lowerX) * sizeY * sizeZ + (neighbourY - lowerY) * sizeZ + (neighbourZ - lowerZ);
 +                        if (!seen.get(neighbourIndex)) {
 +                            seen.set(neighbourIndex);
-                             queue.enqueue(neighbourKey);
++                            queue.add(neighbourKey);
                          }
 +                        // Nix end - Optimize POI traversal with preallocated BitSet and queue
                      }
