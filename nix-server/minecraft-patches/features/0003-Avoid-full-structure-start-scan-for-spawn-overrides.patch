@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nostalfinals <yuu8583@proton.me>
+Date: Wed, 22 Apr 2026 00:02:20 +0800
+Subject: [PATCH] Avoid full structure start scan for spawn overrides
+
+Short-circuit structure spawn override checks once any valid referenced start matches the queried position instead of scanning every referenced structure-start chunk.
+
+Replace the MutableBoolean + fillStartsForStructure walk with a boolean helper in StructureManager that returns on the first match. This is not strictly behaviourally equivalent, since the old code would continue touching remaining STRUCTURE_STARTS chunks and warm StructureCheck state as an incidental side effect, but the actual spawn override decision only depends on whether any matching start exists, so the selected mob list remains unchanged while avoiding unnecessary chunk work on this hot path.
+
+diff --git a/net/minecraft/world/level/StructureManager.java b/net/minecraft/world/level/StructureManager.java
+index a8f00da4d5c7cca9b6948d7c2d5114f84fdacc00..df0d8083c5b6477ff3b3f170ebed78330a84ce21 100644
+--- a/net/minecraft/world/level/StructureManager.java
++++ b/net/minecraft/world/level/StructureManager.java
+@@ -86,6 +86,21 @@ public class StructureManager {
+         }
+     }
+ 
++    // Nix start - Avoid full structure start scan for spawn overrides
++    public boolean anyStartForStructureMatches(final Structure structure, final LongSet referencesForStructure, final Predicate<StructureStart> condition) {
++        for (long key : referencesForStructure) {
++            SectionPos sectionPos = SectionPos.of(ChunkPos.unpack(key), this.level.getMinSectionY());
++            StructureStart start = this.getStartForStructure(
++                    sectionPos, structure, this.level.getChunk(sectionPos.x(), sectionPos.z(), ChunkStatus.STRUCTURE_STARTS)
++            );
++            if (start != null && start.isValid() && condition.test(start)) {
++                return true;
++            }
++        }
++        return false;
++    }
++    // Nix end - Avoid full structure start scan for spawn overrides
++
+     public @Nullable StructureStart getStartForStructure(final SectionPos pos, final Structure structure, final StructureAccess chunk) {
+         return chunk.getStartForStructure(structure);
+     }
+diff --git a/net/minecraft/world/level/chunk/ChunkGenerator.java b/net/minecraft/world/level/chunk/ChunkGenerator.java
+index a5d61f84dbf2937162abdfc1692f0848b971a4ce..abafaa357da36169b72414fcd10739e9eec60a89 100644
+--- a/net/minecraft/world/level/chunk/ChunkGenerator.java
++++ b/net/minecraft/world/level/chunk/ChunkGenerator.java
+@@ -509,18 +509,14 @@ public abstract class ChunkGenerator {
+             Structure structure = entry.getKey();
+             StructureSpawnOverride override = structure.spawnOverrides().get(mobCategory);
+             if (override != null) {
+-                MutableBoolean inOverrideBox = new MutableBoolean(false);
++                // Nix start - Avoid full structure start scan for spawn overrides
+                 Predicate<StructureStart> check = override.boundingBox() == StructureSpawnOverride.BoundingBoxType.PIECE
+                     ? start -> structureManager.structureHasPieceAt(pos, start)
+                     : start -> start.getBoundingBox().isInside(pos);
+-                structureManager.fillStartsForStructure(structure, entry.getValue(), start -> {
+-                    if (inOverrideBox.isFalse() && check.test(start)) {
+-                        inOverrideBox.setTrue();
+-                    }
+-                });
+-                if (inOverrideBox.isTrue()) {
++                if (structureManager.anyStartForStructureMatches(structure, entry.getValue(), check)) {
+                     return override.spawns();
+                 }
++                // Nix end - Avoid full structure start scan for spawn overrides
+             }
+         }
+ 
