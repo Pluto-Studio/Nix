@@ -5,7 +5,7 @@ Subject: [PATCH] Rebrand
 
 
 diff --git a/src/main/java/io/papermc/paper/ServerBuildInfo.java b/src/main/java/io/papermc/paper/ServerBuildInfo.java
-index 652ff54e7c50412503725d628bfe72ed03059790..9dbd24f89b0ce51703ef602a83f7799b93790659 100644
+index 652ff54e7c50412503725d628bfe72ed03059790..7f1c7c780c236f46c128bfe1cbf0800f3db95793 100644
 --- a/src/main/java/io/papermc/paper/ServerBuildInfo.java
 +++ b/src/main/java/io/papermc/paper/ServerBuildInfo.java
 @@ -19,6 +19,13 @@ public interface ServerBuildInfo {
@@ -14,7 +14,7 @@ index 652ff54e7c50412503725d628bfe72ed03059790..9dbd24f89b0ce51703ef602a83f7799b
  
 +    // Nix start - Rebrand
 +    /**
-+     * The brand id for Paper.
++     * The brand id for Nix.
 +     */
 +    Key BRAND_NIX_ID = Key.key("plutoproject", "nix");
 +    // Nix end - Rebrand
