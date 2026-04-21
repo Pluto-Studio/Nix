@@ -64,7 +64,7 @@ index 7ffb7a210bf840009158d5e4364dad78221ded6c..95c88beb7aca2640d10f024756b7b63a
                  // (async tasks must live with race-conditions if they attempt to cancel between these few lines of code)
              }
 diff --git a/src/main/java/org/spigotmc/WatchdogThread.java b/src/main/java/org/spigotmc/WatchdogThread.java
-index 5c1306ac6eb620a38ed5ef3632b611214e1d5dcd..f9f9276bdb70dbc66c4f306decbbd095e846a5ff 100644
+index 5c1306ac6eb620a38ed5ef3632b611214e1d5dcd..354b2c05957e768baa737f044546b717b5f848b4 100644
 --- a/src/main/java/org/spigotmc/WatchdogThread.java
 +++ b/src/main/java/org/spigotmc/WatchdogThread.java
 @@ -25,7 +25,7 @@ public class WatchdogThread extends ca.spottedleaf.moonrise.common.util.TickThre
@@ -87,7 +87,7 @@ index 5c1306ac6eb620a38ed5ef3632b611214e1d5dcd..f9f9276bdb70dbc66c4f306decbbd095
                      logger.log(Level.SEVERE, "If you see a world save or edit, then it means you did far more than your server can handle at once");
                      logger.log(Level.SEVERE, "\t If this is the case, consider increasing timeout-time in spigot.yml but note that this will replace the crash with LARGE lag spikes");
 -                    logger.log(Level.SEVERE, "If you are unsure or still think this is a Paper bug, please report this to https://github.com/PaperMC/Paper/issues");
-+                    logger.log(Level.SEVERE, "If you are unsure or still think this is a Nix bug, please report this to https://github.com/Pluto-Studio/Nix"); // Nix - Rebrand
++                    logger.log(Level.SEVERE, "If you are unsure or still think this is a Nix bug, please report this to https://github.com/Pluto-Studio/Nix/issues"); // Nix - Rebrand
                      logger.log(Level.SEVERE, "Be sure to include ALL relevant console errors and Minecraft crash reports");
 -                    logger.log(Level.SEVERE, "Paper version: " + Bukkit.getServer().getVersion());
 +                    logger.log(Level.SEVERE, "Nix version: " + Bukkit.getServer().getVersion()); // Nix - Rebrand
