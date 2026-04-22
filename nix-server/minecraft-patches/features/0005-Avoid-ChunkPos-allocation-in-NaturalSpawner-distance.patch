@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nostalfinals <yuu8583@proton.me>
+Date: Wed, 22 Apr 2026 19:47:52 +0800
+Subject: [PATCH] Avoid ChunkPos allocation in NaturalSpawner distance check
+
+
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 3f02da2014ed8e4169f4bb819b4d9e61154b7b06..b502a062070598b0ae956a52acc4b8a15e8e8169 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -2701,6 +2701,23 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         // Paper end - rewrite chunk system
+     }
+ 
++    // Nix start - Avoid ChunkPos allocation in NaturalSpawner distance check
++    public boolean nix$canSpawnEntitiesInChunk(final int chunkX, final int chunkZ) {
++        final ca.spottedleaf.moonrise.patches.chunk_system.scheduling.NewChunkHolder chunkHolder = this.moonrise$getChunkTaskScheduler().chunkHolderManager.getChunkHolder(ca.spottedleaf.moonrise.common.util.CoordinateUtils.getChunkKey(chunkX, chunkZ));
++        final WorldBorder worldBorder = this.getWorldBorder();
++
++        final int minBlockX = chunkX << 4;
++        final int minBlockZ = chunkZ << 4;
++        final int maxBlockX = minBlockX + 15;
++        final int maxBlockZ = minBlockZ + 15;
++
++        return chunkHolder != null
++                && chunkHolder.isEntityTickingReady()
++                && worldBorder.isWithinBounds(minBlockX, minBlockZ)
++                && worldBorder.isWithinBounds(maxBlockX, maxBlockZ);
++    }
++    // Nix end - Avoid ChunkPos allocation in NaturalSpawner distance check
++
+     @Override
+     public FeatureFlagSet enabledFeatures() {
+         return this.server.getWorldData().enabledFeatures();
+diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
+index fab94ac06677e950a82ecb731a58b68578b02c9e..f4954f7002a6843eb3ff55560665f6c18d8bf7dc 100644
+--- a/net/minecraft/world/level/NaturalSpawner.java
++++ b/net/minecraft/world/level/NaturalSpawner.java
+@@ -369,8 +369,12 @@ public final class NaturalSpawner {
+                 && respawnData.pos().closerToCenterThan(new Vec3(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5), 24.0)) {
+                 return false;
+             } else {
+-                ChunkPos chunkPos = ChunkPos.containing(pos);
+-                return Objects.equals(chunkPos, chunk.getPos()) || level.canSpawnEntitiesInChunk(chunkPos);
++                // Nix start - Avoid ChunkPos allocation in NaturalSpawner distance check
++                final ChunkPos chunkPos = chunk.getPos();
++                final int chunkX = pos.getX() >> 4;
++                final int chunkZ = pos.getZ() >> 4;
++                return (chunkPos.x() == chunkX && chunkPos.z() == chunkZ) || level.nix$canSpawnEntitiesInChunk(chunkX, chunkZ);
++                // Nix end - Avoid ChunkPos allocation in NaturalSpawner distance check
+             }
+         }
+     }
