@@ -28,7 +28,7 @@
 - Minecraft source:
   - `nix-server/src/minecraft/java`
   - `nix-server/src/minecraft/resources`  
-  These are separate git submodules and gitignored.  
+  These are separate git repositories and gitignored.  
   Searching from repo root may skip them — explicitly include these paths when needed.
 
 - Patch types:
