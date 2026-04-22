@@ -3,8 +3,7 @@ From: nostalfinals <yuu8583@proton.me>
 Date: Wed, 22 Apr 2026 14:58:02 +0800
 Subject: [PATCH] Cache behaviors in scan order to avoid iterator allocation
 
-Should preserve the original behavior priority semantics while reducing
-a lot Iterator / List allocation overhead.
+Should preserve the original behavior priority semantics while reducing a lot Iterator / List allocation overhead.
 
 diff --git a/net/minecraft/world/entity/ai/Brain.java b/net/minecraft/world/entity/ai/Brain.java
 index a4a97bb95d5cb0def0d37b64632891e5c68de510..c29963709022c99510285f580b0883887a0eb5f7 100644
