@@ -1,12 +1,12 @@
 # Project Overview
 
-- A Minecraft Paper server fork optimized via **Workload-Guided Optimization (WGO)**, driven by real profiling data under specific workload scenarios.
-- Uses a **patch-based workflow** instead of directly distributing upstream (Paper/Minecraft) source. Managed via Paper’s `paperweight` for patch application, source generation, and patch rebuilding.
+- A Minecraft Paper server fork optimized via Workload-Guided Optimization (WGO), driven by real profiling data under specific workload scenarios.
+- Uses a patch-based workflow instead of directly distributing upstream (Paper/Minecraft) source. Managed via Paper’s `paperweight` for patch application, source generation, and patch rebuilding.
 
 # Workflow Rules
 
 - Parallelize tasks when appropriate.
-- Minecraft internals involve deep call stacks and complex object graphs. When evaluating whether a change breaks vanilla behavior, **trace call sites thoroughly** and understand real usage, not just the local method/class.
+- Minecraft internals involve deep call stacks and complex object graphs. When evaluating whether a change breaks vanilla behavior, trace call sites thoroughly and understand real usage, not just the local method/class.
 - No unit tests. Do not run tests.
 
 # Repository Structure
@@ -18,7 +18,7 @@
 - Upstream Paper-added server/API code (e.g. Bukkit, CraftBukkit) lives under:
   - `paper-server`
   - `paper-api`  
-  These are **generated** via `paperweight` Gradle tasks and may not exist until patches are applied.
+  These are generated via `paperweight` Gradle tasks and may not exist until patches are applied.
 
 - Patch storage:
   - `nix-api` / `nix-server`
@@ -28,19 +28,19 @@
 - Minecraft source:
   - `nix-server/src/minecraft/java`
   - `nix-server/src/minecraft/resources`  
-  These are **separate git submodules and gitignored**.  
+  These are separate git submodules and gitignored.  
   Searching from repo root may skip them — explicitly include these paths when needed.
 
 - Patch types:
   - `feature`:
     - Generated from commits in the Minecraft subrepo.
     - Applied back onto the subrepo during patch apply.
-    - Any modification requires **rebuilding patches**, or changes will be lost.
+    - Any modification requires rebuilding patches, or changes will be lost.
   - `resource`: same behavior as `feature`.
   - `source`:
     - File-level aggregation (e.g. `A.java.patch` contains full file diff).
     - Not commit-based.
-    - Not used in this project — **only use feature patches**.
+    - Not used in this project — only use feature patches.
 
 - Patch naming:
   - Derived from commit message.
@@ -48,10 +48,10 @@
 
 # Coding Guidelines
 
-- **Minimize patch surface area.** Only modify what is necessary.
-- **Do not add or remove imports.**
+- Minimize patch surface area. Only modify what is necessary.
+- Do not add or remove imports.
   - If an import becomes unused, keep it.
-  - If a new class is needed, use the **fully qualified name** instead of adding an import.
+  - If a new class is needed, use the fully qualified name instead of adding an import.
 
 - Patch annotations are required:
   - Multi-line changes:
@@ -73,8 +73,8 @@
 
 - Commit rules (within subrepo):
   - One commit = one patch.
-  - Do **not spam commits**.
-  - If a patch needs changes, **amend the existing commit**, do not create a new one.
+  - Do not spam commits.
+  - If a patch needs changes, amend the existing commit, do not create a new one.
 
 - Patch commits' description must include:
   - What was changed
