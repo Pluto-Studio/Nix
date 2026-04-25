@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nostalfinals <yuu8583@proton.me>
+Date: Sat, 25 Apr 2026 19:58:51 +0800
+Subject: [PATCH] Avoid unbounded pushable entity lookup
+
+
+diff --git a/net/minecraft/world/entity/LivingEntity.java b/net/minecraft/world/entity/LivingEntity.java
+index 6a0ebbdfcc0bc07915574c1cf87463e82213ca7e..f8c76b8c92c0faa8bd36ed744a53d9bff878e497 100644
+--- a/net/minecraft/world/entity/LivingEntity.java
++++ b/net/minecraft/world/entity/LivingEntity.java
+@@ -3893,7 +3893,10 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+             return;
+         }
+         // Paper end - don't run getEntities if we're not going to use its result
+-        List<Entity> pushableEntities = this.level().getPushableEntities(this, this.getBoundingBox());
++        // Nix start - Avoid unbounded pushable entity lookup
++        final int lookupLimit = Math.max(maxCramming, this.level().paperConfig().collisions.maxEntityCollisions);
++        final List<Entity> pushableEntities = this.level().nix$getPushableEntities(this, this.getBoundingBox(), _ -> true, lookupLimit);
++        // Nix end - Avoid unbounded pushable entity lookup
+         if (!pushableEntities.isEmpty()) {
+             if (this.level() instanceof ServerLevel serverLevel) {
+                 // Paper - don't run getEntities if we're not going to use its result; moved up
+@@ -3906,6 +3909,13 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+                         }
+                     }
+ 
++                    // Nix start - Avoid unbounded pushable entity lookup
++                    if (count < maxCramming && pushableEntities.size() >= lookupLimit) {
++                        final List<Entity> crammingEntities = this.level().nix$getPushableEntities(this, this.getBoundingBox(), entity -> !entity.isPassenger(), maxCramming);
++                        count = crammingEntities.size();
++                    }
++                    // Nix end - Avoid unbounded pushable entity lookup
++
+                     if (count > maxCramming - 1) {
+                         this.hurtServer(serverLevel, this.damageSources().cramming(), 6.0F);
+                     }
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index e34e901dce06c6bc6060418593010dcfb38e9396..3b7cd9569704ec24017a34d7977d83fb8cd65d1c 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -1904,6 +1904,22 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+         return this.getEntities(pusher, boundingBox, EntitySelector.pushableBy(pusher));
+     }
+ 
++    // Nix start - Avoid unbounded pushable entity lookup
++    public List<Entity> nix$getPushableEntities(
++            final Entity pusher,
++            final AABB boundingBox,
++            final Predicate<? super Entity> extraPredicate,
++            final int maxCount
++    ) {
++        final List<Entity> pushableEntities = new java.util.ArrayList<>(maxCount);
++        final Predicate<Entity> pushableBy = EntitySelector.pushableBy(pusher);
++        final Predicate<Entity> predicate = entity -> pushableBy.test(entity) && extraPredicate.test(entity);
++
++        this.entityLookup.getEntities(pusher, boundingBox, pushableEntities, predicate, maxCount);
++        return pushableEntities;
++    }
++    // Nix end - Avoid unbounded pushable entity lookup
++
+     public abstract @Nullable Entity getEntity(int id);
+ 
+     public @Nullable Entity getEntity(final UUID uuid) {
