@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nostalfinals <yuu8583@proton.me>
+Date: Sun, 26 Apr 2026 00:43:47 +0800
+Subject: [PATCH] Avoid Optional allocation on mob spawn hot path
+
+
+diff --git a/net/minecraft/util/random/WeightedList.java b/net/minecraft/util/random/WeightedList.java
+index 48e1dfb3f9f6514193b71ce20dcc5ee09ca7036f..fb2aadcd2aec0e57c3d8c8e587eb5cb451b11e94 100644
+--- a/net/minecraft/util/random/WeightedList.java
++++ b/net/minecraft/util/random/WeightedList.java
+@@ -72,6 +72,17 @@ public class WeightedList<E> { // Paper - non-final
+         }
+     }
+ 
++    // Nix start - Avoid Optional allocation on mob spawn hot path
++    public @Nullable E getRandomOrNull(final RandomSource random) {
++        if (this.selector == null) {
++            return null;
++        } else {
++            int selection = random.nextInt(this.totalWeight);
++            return Objects.requireNonNull(this.selector.get(selection));
++        }
++    }
++    // Nix end - Avoid Optional allocation on mob spawn hot path
++
+     public E getRandomOrThrow(final RandomSource random) {
+         if (this.selector == null) {
+             throw new IllegalStateException("Weighted list has no elements");
+diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
+index f4954f7002a6843eb3ff55560665f6c18d8bf7dc..fe861344b7fd99c294964311b75d9e67d97e9c3b 100644
+--- a/net/minecraft/world/level/NaturalSpawner.java
++++ b/net/minecraft/world/level/NaturalSpawner.java
+@@ -294,14 +294,16 @@ public final class NaturalSpawner {
+                         double nearestPlayerDistanceSqr = nearestPlayer.distanceToSqr(xx, yStart, zz);
+                         if (level.isLoadedAndInBounds(pos) && isRightDistanceToPlayerAndSpawnPoint(level, chunk, pos, nearestPlayerDistanceSqr)) { // Paper - don't load chunks for mob spawn
+                             if (currentSpawnData == null) {
+-                                Optional<MobSpawnSettings.SpawnerData> nextSpawnData = getRandomSpawnMobAt(
++                                // Nix start - Avoid Optional allocation on mob spawn hot path
++                                final MobSpawnSettings.SpawnerData nextSpawnData = getRandomSpawnMobAtOrNull(
+                                     level, structureManager, generator, mobCategory, level.random, pos
+                                 );
+-                                if (nextSpawnData.isEmpty()) {
++                                if (nextSpawnData == null) {
+                                     break;
+                                 }
+ 
+-                                currentSpawnData = nextSpawnData.get();
++                                currentSpawnData = nextSpawnData;
++                                // Nix end - Avoid Optional allocation on mob spawn hot path
+                                 max = currentSpawnData.minCount() + level.random.nextInt(1 + currentSpawnData.maxCount() - currentSpawnData.minCount());
+                             }
+ 
+@@ -461,6 +463,22 @@ public final class NaturalSpawner {
+             : mobsAt(level, structureManager, generator, mobCategory, pos, biome).getRandom(random);
+     }
+ 
++    // Nix start - Avoid Optional allocation on mob spawn hot path
++    private static MobSpawnSettings.@Nullable SpawnerData getRandomSpawnMobAtOrNull(
++            final ServerLevel level,
++            final StructureManager structureManager,
++            final ChunkGenerator generator,
++            final MobCategory mobCategory,
++            final RandomSource random,
++            final BlockPos pos
++    ) {
++        Holder<Biome> biome = level.getBiome(pos);
++        return mobCategory == MobCategory.WATER_AMBIENT && biome.is(BiomeTags.REDUCED_WATER_AMBIENT_SPAWNS) && random.nextFloat() < 0.98F
++                ? null
++                : mobsAt(level, structureManager, generator, mobCategory, pos, biome).getRandomOrNull(random);
++    }
++    // Nix end - Avoid Optional allocation on mob spawn hot path
++
+     private static boolean canSpawnMobAt(
+         final ServerLevel level,
+         final StructureManager structureManager,
