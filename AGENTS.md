@@ -6,7 +6,6 @@
 # Workflow Rules
 
 - Parallelize tasks when appropriate.
-- **DO NOT USE `task` TOOL OR SPAWN ANY SUBAGENT WHEN NOT INSTRUCTED.**
 - Minecraft internals involve deep call stacks and complex object graphs. When evaluating whether a change breaks vanilla behavior, trace call sites thoroughly and understand real usage, not just the local method/class.
 - No unit tests. Do not run tests.
 
