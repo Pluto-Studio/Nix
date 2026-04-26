@@ -34,10 +34,10 @@ index 9cd46a8619e575a865f4d00ce71d249c9b028b2f..e2907205ecb01afcbf252923f89446ba
                  if (!this.isAlive()) {
                      return false;
 diff --git a/net/minecraft/world/level/BlockGetter.java b/net/minecraft/world/level/BlockGetter.java
-index f9073223aad937a9bd27a9a8be8817de32f967f6..5cffd0c8a1e537cd44b3dfc03effe553bb2575fa 100644
+index f9073223aad937a9bd27a9a8be8817de32f967f6..104ea2254c640eb36ffebd8aa14bb563f24b16b7 100644
 --- a/net/minecraft/world/level/BlockGetter.java
 +++ b/net/minecraft/world/level/BlockGetter.java
-@@ -217,30 +217,56 @@ public interface BlockGetter extends LevelHeightAccessor {
+@@ -217,30 +217,59 @@ public interface BlockGetter extends LevelHeightAccessor {
  
              return true;
          } else {
@@ -63,11 +63,14 @@ index f9073223aad937a9bd27a9a8be8817de32f967f6..5cffd0c8a1e537cd44b3dfc03effe553
 -                visitedBlocks.add(blockPosx.asLong());
 +            return true;
 +        } else {
++            if (!visitedBlocks.isEmpty()) {
++                visitedBlocks.clear();
+             }
 +            try {
 +                return forEachBlockIntersectedBetweenWithMove(travel, aabbAtTarget, visitedBlocks, visitor);
 +            } finally {
 +                visitedBlocks.clear();
-             }
++            }
 +        }
 +    }
  
