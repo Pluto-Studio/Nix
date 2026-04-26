@@ -4,7 +4,7 @@ Date: Sun, 26 Apr 2026 18:03:18 +0800
 Subject: [PATCH] Reuse entity block intersection scratch set
 
 Replace the traversal scratch set used by Entity#checkInsideBlocks with a LongArraySet.
-Entity block-intersection traversal is capped at 16 movement iterations, so the scratch set usually remains small enough for linear lookup to be cheaper than initializing and probing a LongOpenHashSet.
+Entity block-intersection traversal is capped at 16 movement iterations, so the scratch set usually remains small enough for linear lookup to be cheaper than a LongOpenHashSet.
 
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
 index 9cd46a8619e575a865f4d00ce71d249c9b028b2f..e2907205ecb01afcbf252923f89446ba22201080 100644
