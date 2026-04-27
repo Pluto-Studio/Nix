@@ -35,10 +35,10 @@ index 6a0ebbdfcc0bc07915574c1cf87463e82213ca7e..f866a195ea55cb8e80fc97c902183be1
                          this.hurtServer(serverLevel, this.damageSources().cramming(), 6.0F);
                      }
 diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
-index e34e901dce06c6bc6060418593010dcfb38e9396..83cc2991b1dd97a954e1a7c1c4951e5582a59dd5 100644
+index a920a20008cb906def77dbc50db1bb1731cc1260..f271d60f9035342fa86d43d3a6eca5ea7a0128cd 100644
 --- a/net/minecraft/world/level/Level.java
 +++ b/net/minecraft/world/level/Level.java
-@@ -1904,6 +1904,24 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+@@ -1905,6 +1905,24 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
          return this.getEntities(pusher, boundingBox, EntitySelector.pushableBy(pusher));
      }
  
