@@ -5,24 +5,24 @@ Subject: [PATCH] Skip firing PreCreatureSpawnEvent when there are no listeners
 
 
 diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
-index 427573fc142c107d3fcc2be9000316221039ba4c..fab94ac06677e950a82ecb731a58b68578b02c9e 100644
+index 4e5078495037078922ab6350a500acdabe177ca5..4dd03762cfc37d4a0565c7e2f39e411e9f703eb6 100644
 --- a/net/minecraft/world/level/NaturalSpawner.java
 +++ b/net/minecraft/world/level/NaturalSpawner.java
-@@ -394,6 +394,8 @@ public final class NaturalSpawner {
+@@ -367,6 +367,8 @@ public final class NaturalSpawner {
      ) {
+         EntityType<?> entityType = data.type();
          // Paper start - PreCreatureSpawnEvent
-         EntityType<?> type = currentSpawnData.type();
 +        // Nix start - Skip firing PreCreatureSpawnEvent when there are no listeners
 +        if (com.destroystokyo.paper.event.entity.PreCreatureSpawnEvent.getHandlerList().getRegisteredListeners().length > 0) {
          com.destroystokyo.paper.event.entity.PreCreatureSpawnEvent event = new com.destroystokyo.paper.event.entity.PreCreatureSpawnEvent(
                  org.bukkit.craftbukkit.util.CraftLocation.toBukkit(pos, level),
-                 org.bukkit.craftbukkit.entity.CraftEntityType.minecraftToBukkit(type), org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason.NATURAL
-@@ -404,6 +406,8 @@ public final class NaturalSpawner {
+                 org.bukkit.craftbukkit.entity.CraftEntityType.minecraftToBukkit(entityType), org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason.NATURAL
+@@ -377,6 +379,8 @@ public final class NaturalSpawner {
              }
              return PreSpawnStatus.CANCELLED;
          }
 +        }
 +        // Nix end - Skip firing PreCreatureSpawnEvent when there are no listeners
-         final boolean success = type.getCategory() != MobCategory.MISC
+         final boolean success = entityType.getCategory() != MobCategory.MISC
          // Paper end - PreCreatureSpawnEvent
-             && (type.canSpawnFarFromPlayer() || !(nearestPlayerDistanceSqr > type.getCategory().getDespawnDistance() * type.getCategory().getDespawnDistance()))
+             && (

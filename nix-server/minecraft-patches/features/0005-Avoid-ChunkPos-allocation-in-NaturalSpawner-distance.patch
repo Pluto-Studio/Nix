@@ -5,10 +5,10 @@ Subject: [PATCH] Avoid ChunkPos allocation in NaturalSpawner distance check
 
 
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index 9499f4a859a5af6953c575a2980b77b6d83c22d3..f64b5ecf7205e5e520d3eac06d966215094fb9c7 100644
+index dc65503a2d785d64d37b76b0303f51cf66d9769a..4c0eb1b104f7347e56f9303d9870e4fdb0ca53c5 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
-@@ -2710,6 +2710,23 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+@@ -2646,6 +2646,23 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
          // Paper end - rewrite chunk system
      }
  
@@ -33,20 +33,20 @@ index 9499f4a859a5af6953c575a2980b77b6d83c22d3..f64b5ecf7205e5e520d3eac06d966215
      public FeatureFlagSet enabledFeatures() {
          return this.server.getWorldData().enabledFeatures();
 diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
-index fab94ac06677e950a82ecb731a58b68578b02c9e..f4954f7002a6843eb3ff55560665f6c18d8bf7dc 100644
+index 4dd03762cfc37d4a0565c7e2f39e411e9f703eb6..00414981aa51977437663697a7f2a145c97f1a5f 100644
 --- a/net/minecraft/world/level/NaturalSpawner.java
 +++ b/net/minecraft/world/level/NaturalSpawner.java
-@@ -369,8 +369,12 @@ public final class NaturalSpawner {
+@@ -342,8 +342,12 @@ public final class NaturalSpawner {
                  && respawnData.pos().closerToCenterThan(new Vec3(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5), 24.0)) {
                  return false;
              } else {
--                ChunkPos chunkPos = ChunkPos.containing(pos);
+-                ChunkPos chunkPos = new ChunkPos(pos);
 -                return Objects.equals(chunkPos, chunk.getPos()) || level.canSpawnEntitiesInChunk(chunkPos);
 +                // Nix start - Avoid ChunkPos allocation in NaturalSpawner distance check
 +                final ChunkPos chunkPos = chunk.getPos();
 +                final int chunkX = pos.getX() >> 4;
 +                final int chunkZ = pos.getZ() >> 4;
-+                return (chunkPos.x() == chunkX && chunkPos.z() == chunkZ) || level.nix$canSpawnEntitiesInChunk(chunkX, chunkZ);
++                return (chunkPos.x == chunkX && chunkPos.z == chunkZ) || level.nix$canSpawnEntitiesInChunk(chunkX, chunkZ);
 +                // Nix end - Avoid ChunkPos allocation in NaturalSpawner distance check
              }
          }

@@ -13,10 +13,10 @@ Two edge cases currently not used by vanilla behavior implementation differ from
 Vanilla behavior priority semantics should be preserved.
 
 diff --git a/net/minecraft/world/entity/ai/Brain.java b/net/minecraft/world/entity/ai/Brain.java
-index a4a97bb95d5cb0def0d37b64632891e5c68de510..af1494d23da9d96208547b7683483b18fb900fd7 100644
+index a8b076d95ca7bbdbdb6f32bd464cf77d9894dcba..604845420cf7bbca910733b94394e10a96b6c00d 100644
 --- a/net/minecraft/world/entity/ai/Brain.java
 +++ b/net/minecraft/world/entity/ai/Brain.java
-@@ -47,6 +47,10 @@ public class Brain<E extends LivingEntity> {
+@@ -57,6 +57,10 @@ public class Brain<E extends LivingEntity> {
      private final Set<Activity> activeActivities = Sets.newHashSet();
      private Activity defaultActivity = Activity.IDLE;
      private long lastScheduleUpdate = -9999L;
@@ -25,33 +25,33 @@ index a4a97bb95d5cb0def0d37b64632891e5c68de510..af1494d23da9d96208547b7683483b18
 +    private final ObjectArrayList<BehaviorControl<? super E>> behaviorsInScanOrder = new ObjectArrayList<>();
 +    // Nix end - Cache behaviors in scan order to avoid iterator allocation
  
-     public static <E extends LivingEntity> Brain.Provider<E> provider(final Collection<? extends SensorType<? extends Sensor<? super E>>> sensorTypes) {
-         return new Brain.Provider<>(ImmutableList.of(), sensorTypes, var0 -> List.of());
-@@ -272,15 +276,14 @@ public class Brain<E extends LivingEntity> {
+     public static <E extends LivingEntity> Brain.Provider<E> provider(
+         Collection<? extends MemoryModuleType<?>> memoryTypes, Collection<? extends SensorType<? extends Sensor<? super E>>> sensorTypes
+@@ -250,15 +254,14 @@ public class Brain<E extends LivingEntity> {
      public List<BehaviorControl<? super E>> getRunningBehaviors() {
-         List<BehaviorControl<? super E>> runningBehaviours = new ObjectArrayList<>();
+         List<BehaviorControl<? super E>> list = new ObjectArrayList<>();
  
--        for (Map<Activity, Set<BehaviorControl<? super E>>> behavioursByActivities : this.availableBehaviorsByPriority.values()) {
--            for (Set<BehaviorControl<? super E>> behaviors : behavioursByActivities.values()) {
--                for (BehaviorControl<? super E> behavior : behaviors) {
--                    if (behavior.getStatus() == Behavior.Status.RUNNING) {
--                        runningBehaviours.add(behavior);
+-        for (Map<Activity, Set<BehaviorControl<? super E>>> map : this.availableBehaviorsByPriority.values()) {
+-            for (Set<BehaviorControl<? super E>> set : map.values()) {
+-                for (BehaviorControl<? super E> behaviorControl : set) {
+-                    if (behaviorControl.getStatus() == Behavior.Status.RUNNING) {
+-                        list.add(behaviorControl);
 -                    }
 -                }
 +        // Nix start - Cache behaviors in scan order to avoid iterator allocation
 +        for (int i = 0; i < this.behaviorsInScanOrder.size(); i++) {
 +            final var behavior = this.behaviorsInScanOrder.get(i);
 +            if (behavior.getStatus() == Behavior.Status.RUNNING) {
-+                runningBehaviours.add(behavior);
++                list.add(behavior);
              }
          }
 +        // Nix end - Cache behaviors in scan order to avoid iterator allocation
  
-         return runningBehaviours;
+         return list;
      }
-@@ -375,11 +378,17 @@ public class Brain<E extends LivingEntity> {
-                 .computeIfAbsent(activity, key -> Sets.newLinkedHashSet())
-                 .add(behavior);
+@@ -380,11 +383,17 @@ public class Brain<E extends LivingEntity> {
+                 .computeIfAbsent(activity, activity1 -> Sets.newLinkedHashSet())
+                 .add((BehaviorControl<? super E>)pair.getSecond());
          }
 +
 +        this.rebuildBehaviorsInScanOrder(); // Nix - Cache behaviors in scan order to avoid iterator allocation
@@ -66,33 +66,33 @@ index a4a97bb95d5cb0def0d37b64632891e5c68de510..af1494d23da9d96208547b7683483b18
 +        // Nix end - Cache behaviors in scan order to avoid iterator allocation
      }
  
-     public boolean isActive(final Activity activity) {
-@@ -406,35 +415,59 @@ public class Brain<E extends LivingEntity> {
-     public void stopAll(final ServerLevel level, final E body) {
-         long timestamp = body.level().getGameTime();
+     public boolean isActive(Activity activity) {
+@@ -433,35 +442,59 @@ public class Brain<E extends LivingEntity> {
+     public void stopAll(ServerLevel level, E owner) {
+         long gameTime = owner.level().getGameTime();
  
--        for (BehaviorControl<? super E> behavior : this.getRunningBehaviors()) {
--            behavior.doStop(level, body, timestamp);
+-        for (BehaviorControl<? super E> behaviorControl : this.getRunningBehaviors()) {
+-            behaviorControl.doStop(level, owner, gameTime);
 +        // Nix start - Cache behaviors in scan order to avoid iterator allocation
 +        for (int i = 0; i < this.behaviorsInScanOrder.size(); i++) {
 +            final var behavior = this.behaviorsInScanOrder.get(i);
 +            if (behavior.getStatus() == Behavior.Status.RUNNING) {
-+                behavior.doStop(level, body, timestamp);
++                behavior.doStop(level, owner, gameTime);
 +            }
          }
 +        // Nix end - Cache behaviors in scan order to avoid iterator allocation
      }
  
-     private void startEachNonRunningBehavior(final ServerLevel level, final E body) {
-         long time = level.getGameTime();
+     private void startEachNonRunningBehavior(ServerLevel level, E entity) {
+         long gameTime = level.getGameTime();
  
--        for (Map<Activity, Set<BehaviorControl<? super E>>> behavioursByActivities : this.availableBehaviorsByPriority.values()) {
--            for (Entry<Activity, Set<BehaviorControl<? super E>>> behavioursForActivity : behavioursByActivities.entrySet()) {
--                Activity activity = behavioursForActivity.getKey();
+-        for (Map<Activity, Set<BehaviorControl<? super E>>> map : this.availableBehaviorsByPriority.values()) {
+-            for (Entry<Activity, Set<BehaviorControl<? super E>>> entry : map.entrySet()) {
+-                Activity activity = entry.getKey();
 -                if (this.activeActivities.contains(activity)) {
--                    for (BehaviorControl<? super E> behavior : behavioursForActivity.getValue()) {
--                        if (behavior.getStatus() == Behavior.Status.STOPPED) {
--                            behavior.tryStart(level, body, time);
+-                    for (BehaviorControl<? super E> behaviorControl : entry.getValue()) {
+-                        if (behaviorControl.getStatus() == Behavior.Status.STOPPED) {
+-                            behaviorControl.tryStart(level, entity, gameTime);
 -                        }
 -                    }
 -                }
@@ -101,22 +101,22 @@ index a4a97bb95d5cb0def0d37b64632891e5c68de510..af1494d23da9d96208547b7683483b18
 +            final Activity activity = this.behaviorActivitiesInScanOrder.get(i);
 +            final BehaviorControl<? super E> behavior = this.behaviorsInScanOrder.get(i);
 +            if (this.activeActivities.contains(activity) && behavior.getStatus() == Behavior.Status.STOPPED) {
-+                behavior.tryStart(level, body, time);
++                behavior.tryStart(level, entity, gameTime);
              }
          }
 +        // Nix end - Cache behaviors in scan order to avoid iterator allocation
      }
  
-     private void tickEachRunningBehavior(final ServerLevel level, final E body) {
-         long timestamp = level.getGameTime();
+     private void tickEachRunningBehavior(ServerLevel level, E entity) {
+         long gameTime = level.getGameTime();
  
--        for (BehaviorControl<? super E> behavior : this.getRunningBehaviors()) {
--            behavior.tickOrStop(level, body, timestamp);
+-        for (BehaviorControl<? super E> behaviorControl : this.getRunningBehaviors()) {
+-            behaviorControl.tickOrStop(level, entity, gameTime);
 +        // Nix start - Cache behaviors in scan order to avoid iterator allocation
 +        for (int i = 0; i < this.behaviorsInScanOrder.size(); i++) {
 +            final var behavior = this.behaviorsInScanOrder.get(i);
 +            if (behavior.getStatus() == Behavior.Status.RUNNING) {
-+                behavior.tickOrStop(level, body, timestamp);
++                behavior.tickOrStop(level, entity, gameTime);
 +            }
 +        }
 +        // Nix end - Cache behaviors in scan order to avoid iterator allocation
@@ -139,5 +139,5 @@ index a4a97bb95d5cb0def0d37b64632891e5c68de510..af1494d23da9d96208547b7683483b18
      }
 +    // Nix end - Cache behaviors in scan order to avoid iterator allocation
  
-     private boolean activityRequirementsAreMet(final Activity activity) {
+     private boolean activityRequirementsAreMet(Activity activity) {
          if (!this.activityRequirements.containsKey(activity)) {

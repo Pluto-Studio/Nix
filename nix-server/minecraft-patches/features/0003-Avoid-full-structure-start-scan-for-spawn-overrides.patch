@@ -10,19 +10,19 @@ This is not strictly behaviourally equivalent, since the old code would continue
 but the actual spawn override decision only depends on whether any matching start exists, so the selected mob list remains unchanged while avoiding unnecessary chunk work on this hot path.
 
 diff --git a/net/minecraft/world/level/StructureManager.java b/net/minecraft/world/level/StructureManager.java
-index a8f00da4d5c7cca9b6948d7c2d5114f84fdacc00..df0d8083c5b6477ff3b3f170ebed78330a84ce21 100644
+index 471f743105613c4d72f87dbc96a08de581f8ca40..cecf0983640f9558992f643537732783574f356f 100644
 --- a/net/minecraft/world/level/StructureManager.java
 +++ b/net/minecraft/world/level/StructureManager.java
-@@ -86,6 +86,21 @@ public class StructureManager {
+@@ -88,6 +88,21 @@ public class StructureManager {
          }
      }
  
 +    // Nix start - Avoid full structure start scan for spawn overrides
 +    public boolean anyStartForStructureMatches(final Structure structure, final LongSet referencesForStructure, final Predicate<StructureStart> condition) {
 +        for (long key : referencesForStructure) {
-+            SectionPos sectionPos = SectionPos.of(ChunkPos.unpack(key), this.level.getMinSectionY());
++            SectionPos sectionPos = SectionPos.of(new ChunkPos(key), this.level.getMinSectionY());
 +            StructureStart start = this.getStartForStructure(
-+                    sectionPos, structure, this.level.getChunk(sectionPos.x(), sectionPos.z(), ChunkStatus.STRUCTURE_STARTS)
++                sectionPos, structure, this.level.getChunk(sectionPos.x(), sectionPos.z(), ChunkStatus.STRUCTURE_STARTS)
 +            );
 +            if (start != null && start.isValid() && condition.test(start)) {
 +                return true;
@@ -32,30 +32,30 @@ index a8f00da4d5c7cca9b6948d7c2d5114f84fdacc00..df0d8083c5b6477ff3b3f170ebed7833
 +    }
 +    // Nix end - Avoid full structure start scan for spawn overrides
 +
-     public @Nullable StructureStart getStartForStructure(final SectionPos pos, final Structure structure, final StructureAccess chunk) {
-         return chunk.getStartForStructure(structure);
+     public @Nullable StructureStart getStartForStructure(SectionPos sectionPos, Structure structure, StructureAccess structureAccess) {
+         return structureAccess.getStartForStructure(structure);
      }
 diff --git a/net/minecraft/world/level/chunk/ChunkGenerator.java b/net/minecraft/world/level/chunk/ChunkGenerator.java
-index a5d61f84dbf2937162abdfc1692f0848b971a4ce..abafaa357da36169b72414fcd10739e9eec60a89 100644
+index 7b98964eb77a619bdaaf5a9d331e3cfe080b52a4..746e7ece13c035658afdceda4e96b949f13fb2b8 100644
 --- a/net/minecraft/world/level/chunk/ChunkGenerator.java
 +++ b/net/minecraft/world/level/chunk/ChunkGenerator.java
-@@ -509,18 +509,14 @@ public abstract class ChunkGenerator {
+@@ -495,18 +495,14 @@ public abstract class ChunkGenerator {
              Structure structure = entry.getKey();
-             StructureSpawnOverride override = structure.spawnOverrides().get(mobCategory);
-             if (override != null) {
--                MutableBoolean inOverrideBox = new MutableBoolean(false);
+             StructureSpawnOverride structureSpawnOverride = structure.spawnOverrides().get(category);
+             if (structureSpawnOverride != null) {
+-                MutableBoolean mutableBoolean = new MutableBoolean(false);
 +                // Nix start - Avoid full structure start scan for spawn overrides
-                 Predicate<StructureStart> check = override.boundingBox() == StructureSpawnOverride.BoundingBoxType.PIECE
-                     ? start -> structureManager.structureHasPieceAt(pos, start)
-                     : start -> start.getBoundingBox().isInside(pos);
--                structureManager.fillStartsForStructure(structure, entry.getValue(), start -> {
--                    if (inOverrideBox.isFalse() && check.test(start)) {
--                        inOverrideBox.setTrue();
+                 Predicate<StructureStart> predicate = structureSpawnOverride.boundingBox() == StructureSpawnOverride.BoundingBoxType.PIECE
+                     ? structureStart -> structureManager.structureHasPieceAt(pos, structureStart)
+                     : structureStart -> structureStart.getBoundingBox().isInside(pos);
+-                structureManager.fillStartsForStructure(structure, entry.getValue(), structureStart -> {
+-                    if (mutableBoolean.isFalse() && predicate.test(structureStart)) {
+-                        mutableBoolean.setTrue();
 -                    }
 -                });
--                if (inOverrideBox.isTrue()) {
-+                if (structureManager.anyStartForStructureMatches(structure, entry.getValue(), check)) {
-                     return override.spawns();
+-                if (mutableBoolean.isTrue()) {
++                if (structureManager.anyStartForStructureMatches(structure, entry.getValue(), predicate)) {
+                     return structureSpawnOverride.spawns();
                  }
 +                // Nix end - Avoid full structure start scan for spawn overrides
              }

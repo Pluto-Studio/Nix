@@ -8,12 +8,12 @@ Preallocate the POI traversal visited set and queue storage to avoid repeated qu
 Replace the visited LongOpenHashSet with a BitSet and switch the queue walk to a preallocated LongArrayList with a head index.
 This preserves the existing traversal/return behaviour while reducing temporary allocations and System.arraycopy overhead on hot villager POI lookups.
 
-diff --git a/ca/spottedleaf/moonrise/patches/poi_lookup/PoiAccess.java b/ca/spottedleaf/moonrise/patches/poi_lookup/PoiAccess.java
-index 85d80b3952a76b0ca7f67401a659cf35dd55b082..efc97c79ed3324250da2f7450aafb1919b3cfcf5 100644
---- a/ca/spottedleaf/moonrise/patches/poi_lookup/PoiAccess.java
-+++ b/ca/spottedleaf/moonrise/patches/poi_lookup/PoiAccess.java
-@@ -111,18 +111,30 @@ public final class PoiAccess {
-         final int upperY = WorldUtil.getMaxSection(poiStorage.levelHeightAccessor);
+diff --git a/io/papermc/paper/util/PoiAccess.java b/io/papermc/paper/util/PoiAccess.java
+index f39294b1f83c4022be5ced4da781103a1eee2daf..6591d14260cd1ca18f713950b4fb2c29700c1dcc 100644
+--- a/io/papermc/paper/util/PoiAccess.java
++++ b/io/papermc/paper/util/PoiAccess.java
+@@ -219,18 +219,30 @@ public final class PoiAccess {
+         final int upperY = WorldUtil.getMaxSection(poiStorage.moonrise$getWorld());
          final int upperZ = Mth.floor(sourcePosition.getZ() + range) >> 4;
  
 +        // Nix start - Optimize POI traversal with preallocated BitSet and queue
@@ -50,7 +50,7 @@ index 85d80b3952a76b0ca7f67401a659cf35dd55b082..efc97c79ed3324250da2f7450aafb191
              final int sectionX = CoordinateUtils.getChunkSectionX(key);
              final int sectionY = CoordinateUtils.getChunkSectionY(key);
              final int sectionZ = CoordinateUtils.getChunkSectionZ(key);
-@@ -160,9 +172,19 @@ public final class PoiAccess {
+@@ -268,9 +280,19 @@ public final class PoiAccess {
                          final int neighbourZ = sectionZ + dz;
  
                          final long neighbourKey = CoordinateUtils.getChunkSectionKey(neighbourX, neighbourY, neighbourZ);
@@ -72,8 +72,8 @@ index 85d80b3952a76b0ca7f67401a659cf35dd55b082..efc97c79ed3324250da2f7450aafb191
                      }
                  }
              }
-@@ -354,18 +376,30 @@ public final class PoiAccess {
-         final int upperY = WorldUtil.getMaxSection(poiStorage.levelHeightAccessor);
+@@ -462,18 +484,30 @@ public final class PoiAccess {
+         final int upperY = WorldUtil.getMaxSection(poiStorage.moonrise$getWorld());
          final int upperZ = Mth.floor(sourcePosition.getZ() + range) >> 4;
  
 +        // Nix start - Optimize POI traversal with preallocated BitSet and queue
@@ -110,7 +110,7 @@ index 85d80b3952a76b0ca7f67401a659cf35dd55b082..efc97c79ed3324250da2f7450aafb191
              final int sectionX = CoordinateUtils.getChunkSectionX(key);
              final int sectionY = CoordinateUtils.getChunkSectionY(key);
              final int sectionZ = CoordinateUtils.getChunkSectionZ(key);
-@@ -404,9 +438,19 @@ public final class PoiAccess {
+@@ -512,9 +546,19 @@ public final class PoiAccess {
                          final int neighbourZ = sectionZ + dz;
  
                          final long neighbourKey = CoordinateUtils.getChunkSectionKey(neighbourX, neighbourY, neighbourZ);

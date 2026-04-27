@@ -5,7 +5,7 @@ Subject: [PATCH] Avoid Optional allocation on mob spawn hot path
 
 
 diff --git a/net/minecraft/util/random/WeightedList.java b/net/minecraft/util/random/WeightedList.java
-index 48e1dfb3f9f6514193b71ce20dcc5ee09ca7036f..fb2aadcd2aec0e57c3d8c8e587eb5cb451b11e94 100644
+index 9bb26ab7e7bedfa67b24897213093cbf2213469e..bc50a25cf85e3d75a2c2f0a70bbc329838ea858a 100644
 --- a/net/minecraft/util/random/WeightedList.java
 +++ b/net/minecraft/util/random/WeightedList.java
 @@ -72,6 +72,17 @@ public class WeightedList<E> { // Paper - non-final
@@ -23,35 +23,35 @@ index 48e1dfb3f9f6514193b71ce20dcc5ee09ca7036f..fb2aadcd2aec0e57c3d8c8e587eb5cb4
 +    }
 +    // Nix end - Avoid Optional allocation on mob spawn hot path
 +
-     public E getRandomOrThrow(final RandomSource random) {
+     public E getRandomOrThrow(RandomSource random) {
          if (this.selector == null) {
              throw new IllegalStateException("Weighted list has no elements");
 diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
-index f4954f7002a6843eb3ff55560665f6c18d8bf7dc..fe861344b7fd99c294964311b75d9e67d97e9c3b 100644
+index 00414981aa51977437663697a7f2a145c97f1a5f..401da232e6794da6bc4675b9b51fe2add1be78b4 100644
 --- a/net/minecraft/world/level/NaturalSpawner.java
 +++ b/net/minecraft/world/level/NaturalSpawner.java
-@@ -294,14 +294,16 @@ public final class NaturalSpawner {
-                         double nearestPlayerDistanceSqr = nearestPlayer.distanceToSqr(xx, yStart, zz);
-                         if (level.isLoadedAndInBounds(pos) && isRightDistanceToPlayerAndSpawnPoint(level, chunk, pos, nearestPlayerDistanceSqr)) { // Paper - don't load chunks for mob spawn
-                             if (currentSpawnData == null) {
--                                Optional<MobSpawnSettings.SpawnerData> nextSpawnData = getRandomSpawnMobAt(
+@@ -269,14 +269,16 @@ public final class NaturalSpawner {
+                         double d2 = nearestPlayer.distanceToSqr(d, y, d1);
+                         if (level.isLoadedAndInBounds(mutableBlockPos) && isRightDistanceToPlayerAndSpawnPoint(level, chunk, mutableBlockPos, d2)) { // Paper - don't load chunks for mob spawn
+                             if (spawnerData == null) {
+-                                Optional<MobSpawnSettings.SpawnerData> randomSpawnMobAt = getRandomSpawnMobAt(
 +                                // Nix start - Avoid Optional allocation on mob spawn hot path
-+                                final MobSpawnSettings.SpawnerData nextSpawnData = getRandomSpawnMobAtOrNull(
-                                     level, structureManager, generator, mobCategory, level.random, pos
++                                final MobSpawnSettings.SpawnerData randomSpawnMobAt = getRandomSpawnMobAtOrNull(
+                                     level, structureManager, generator, category, level.random, mutableBlockPos
                                  );
--                                if (nextSpawnData.isEmpty()) {
-+                                if (nextSpawnData == null) {
+-                                if (randomSpawnMobAt.isEmpty()) {
++                                if (randomSpawnMobAt == null) {
                                      break;
                                  }
  
--                                currentSpawnData = nextSpawnData.get();
-+                                currentSpawnData = nextSpawnData;
+-                                spawnerData = randomSpawnMobAt.get();
++                                spawnerData = randomSpawnMobAt;
 +                                // Nix end - Avoid Optional allocation on mob spawn hot path
-                                 max = currentSpawnData.minCount() + level.random.nextInt(1 + currentSpawnData.maxCount() - currentSpawnData.minCount());
+                                 ceil = spawnerData.minCount() + level.random.nextInt(1 + spawnerData.maxCount() - spawnerData.minCount());
                              }
  
-@@ -461,6 +463,22 @@ public final class NaturalSpawner {
-             : mobsAt(level, structureManager, generator, mobCategory, pos, biome).getRandom(random);
+@@ -432,6 +434,22 @@ public final class NaturalSpawner {
+             : mobsAt(level, structureManager, generator, category, pos, biome).getRandom(random);
      }
  
 +    // Nix start - Avoid Optional allocation on mob spawn hot path
@@ -71,5 +71,5 @@ index f4954f7002a6843eb3ff55560665f6c18d8bf7dc..fe861344b7fd99c294964311b75d9e67
 +    // Nix end - Avoid Optional allocation on mob spawn hot path
 +
      private static boolean canSpawnMobAt(
-         final ServerLevel level,
-         final StructureManager structureManager,
+         ServerLevel level, StructureManager structureManager, ChunkGenerator generator, MobCategory category, MobSpawnSettings.SpawnerData data, BlockPos pos
+     ) {
