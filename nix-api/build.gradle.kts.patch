@@ -1,6 +1,6 @@
 --- a/paper-api/build.gradle.kts
 +++ b/paper-api/build.gradle.kts
-@@ -91,18 +_,32 @@
+@@ -94,18 +_,32 @@
      testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.0.3")
  }
  
@@ -36,7 +36,7 @@
  }
  
  val outgoingVariants = arrayOf("runtimeElements", "apiElements", "sourcesElements", "javadocElements")
-@@ -182,8 +_,9 @@
+@@ -185,8 +_,9 @@
  val services = objects.newInstance<Services>()
  
  tasks.withType<Javadoc>().configureEach {
@@ -47,7 +47,7 @@
      options.use()
      options.isDocFilesSubDirs = true
      options.links(
-@@ -217,11 +_,11 @@
+@@ -213,11 +_,11 @@
      }
  
      // workaround for https://github.com/gradle/gradle/issues/4046

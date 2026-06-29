@@ -36,10 +36,10 @@ index a8f00da4d5c7cca9b6948d7c2d5114f84fdacc00..df0d8083c5b6477ff3b3f170ebed7833
          return chunk.getStartForStructure(structure);
      }
 diff --git a/net/minecraft/world/level/chunk/ChunkGenerator.java b/net/minecraft/world/level/chunk/ChunkGenerator.java
-index a5d61f84dbf2937162abdfc1692f0848b971a4ce..abafaa357da36169b72414fcd10739e9eec60a89 100644
+index 1624d73d63a848b1eced1964193f14f7ab9c1bc2..8f168a5a344e273017030c00d7e2e5d87845cc47 100644
 --- a/net/minecraft/world/level/chunk/ChunkGenerator.java
 +++ b/net/minecraft/world/level/chunk/ChunkGenerator.java
-@@ -509,18 +509,14 @@ public abstract class ChunkGenerator {
+@@ -511,18 +511,14 @@ public abstract class ChunkGenerator {
              Structure structure = entry.getKey();
              StructureSpawnOverride override = structure.spawnOverrides().get(mobCategory);
              if (override != null) {

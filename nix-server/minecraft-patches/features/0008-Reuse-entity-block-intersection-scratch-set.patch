@@ -7,10 +7,10 @@ Replace the traversal scratch set used by Entity#checkInsideBlocks with a LongAr
 Entity block-intersection traversal is capped at 16 movement iterations, so the scratch set usually remains small enough for linear lookup to be cheaper than a LongOpenHashSet.
 
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
-index 9cd46a8619e575a865f4d00ce71d249c9b028b2f..e2907205ecb01afcbf252923f89446ba22201080 100644
+index 1530810cdb74810e37e3e22ce4fcda4ee7511055..aa54becfdcdbf579b817d4c1e70479d7773172e9 100644
 --- a/net/minecraft/world/entity/Entity.java
 +++ b/net/minecraft/world/entity/Entity.java
-@@ -353,6 +353,7 @@ public abstract class Entity
+@@ -354,6 +354,7 @@ public abstract class Entity
      private final ArrayDeque<Entity.Movement> movementThisTick = new ArrayDeque<>(100);
      private final List<Entity.Movement> finalMovementsThisTick = new ObjectArrayList<>();
      private final LongSet visitedBlocks = new LongOpenHashSet();
@@ -18,7 +18,7 @@ index 9cd46a8619e575a865f4d00ce71d249c9b028b2f..e2907205ecb01afcbf252923f89446ba
      private final InsideBlockEffectApplier.StepBasedCollector insideEffectCollector = new InsideBlockEffectApplier.StepBasedCollector();
      private CustomData customData = CustomData.EMPTY;
      // CraftBukkit start
-@@ -1755,10 +1756,13 @@ public abstract class Entity
+@@ -1836,10 +1837,13 @@ public abstract class Entity
          boolean debugEntityBlockIntersections = this.level instanceof ServerLevel serverLevel
              && serverLevel.getServer().debugSubscribers().hasAnySubscriberFor(DebugSubscriptions.ENTITY_BLOCK_INTERSECTIONS);
          AtomicInteger iterations = new AtomicInteger();
@@ -34,7 +34,7 @@ index 9cd46a8619e575a865f4d00ce71d249c9b028b2f..e2907205ecb01afcbf252923f89446ba
                  if (!this.isAlive()) {
                      return false;
 diff --git a/net/minecraft/world/level/BlockGetter.java b/net/minecraft/world/level/BlockGetter.java
-index f9073223aad937a9bd27a9a8be8817de32f967f6..104ea2254c640eb36ffebd8aa14bb563f24b16b7 100644
+index 2a4c928281c7e455d6f210aeb599881855d328f8..e03710c5d9823facb584e24800af918a485500f5 100644
 --- a/net/minecraft/world/level/BlockGetter.java
 +++ b/net/minecraft/world/level/BlockGetter.java
 @@ -217,30 +217,59 @@ public interface BlockGetter extends LevelHeightAccessor {
@@ -48,62 +48,60 @@ index f9073223aad937a9bd27a9a8be8817de32f967f6..104ea2254c640eb36ffebd8aa14bb563
 +        }
 +    }
  
--            for (BlockPos blockPosx : BlockPos.betweenCornersInDirection(aabbAtTarget.move(travel.scale(-1.0)), travel)) {
--                if (!visitor.visit(blockPosx, 0)) {
+-            for (BlockPos blockPos : BlockPos.betweenCornersInDirection(aabbAtTarget.move(travel.scale(-1.0)), travel)) {
 +    // Nix start - Reuse entity block intersection scratch set
 +    static boolean nix$forEachBlockIntersectedBetween(final Vec3 from, final Vec3 to, final AABB aabbAtTarget, final LongSet visitedBlocks, final BlockGetter.BlockStepVisitor visitor) {
 +        Vec3 travel = to.subtract(from);
 +        if (travel.lengthSqr() < Mth.square(1.0E-5F)) {
 +            for (BlockPos blockPos : BlockPos.betweenClosed(aabbAtTarget)) {
-+                if (!visitor.visit(blockPos, 0)) {
+                 if (!visitor.visit(blockPos, 0)) {
                      return false;
                  }
 +            }
  
--                visitedBlocks.add(blockPosx.asLong());
+-                visitedBlocks.add(blockPos.asLong());
 +            return true;
 +        } else {
 +            if (!visitedBlocks.isEmpty()) {
 +                visitedBlocks.clear();
-             }
++            }
 +            try {
 +                return forEachBlockIntersectedBetweenWithMove(travel, aabbAtTarget, visitedBlocks, visitor);
 +            } finally {
 +                visitedBlocks.clear();
-+            }
+             }
 +        }
 +    }
  
 -            int iterations = addCollisionsAlongTravel(visitedBlocks, travel, aabbAtTarget, visitor);
 -            if (iterations < 0) {
 +    private static boolean forEachBlockIntersectedBetweenWithMove(final Vec3 travel, final AABB aabbAtTarget, final LongSet visitedBlocks, final BlockGetter.BlockStepVisitor visitor) {
-+        for (BlockPos blockPosx : BlockPos.betweenCornersInDirection(aabbAtTarget.move(travel.scale(-1.0)), travel)) {
-+            if (!visitor.visit(blockPosx, 0)) {
++        for (BlockPos blockPos : BlockPos.betweenCornersInDirection(aabbAtTarget.move(travel.scale(-1.0)), travel)) {
++            if (!visitor.visit(blockPos, 0)) {
                  return false;
--            } else {
--                for (BlockPos blockPosx : BlockPos.betweenCornersInDirection(aabbAtTarget, travel)) {
--                    if (visitedBlocks.add(blockPosx.asLong()) && !visitor.visit(blockPosx, iterations + 1)) {
--                        return false;
--                    }
+             }
+ 
+-            for (BlockPos blockPos : BlockPos.betweenCornersInDirection(aabbAtTarget, travel)) {
+-                if (visitedBlocks.add(blockPos.asLong()) && !visitor.visit(blockPos, iterations + 1)) {
+-                    return false;
 -                }
-+            }
-+
-+            visitedBlocks.add(blockPosx.asLong());
+-            }
++            visitedBlocks.add(blockPos.asLong());
 +        }
  
--                return true;
+-            return true;
 +        int iterations = addCollisionsAlongTravel(visitedBlocks, travel, aabbAtTarget, visitor);
 +        if (iterations < 0) {
 +            return false;
-+        } else {
-+            for (BlockPos blockPosx : BlockPos.betweenCornersInDirection(aabbAtTarget, travel)) {
-+                if (visitedBlocks.add(blockPosx.asLong()) && !visitor.visit(blockPosx, iterations + 1)) {
-+                    return false;
-+                }
-             }
-+
-+            return true;
          }
++
++        for (BlockPos blockPos : BlockPos.betweenCornersInDirection(aabbAtTarget, travel)) {
++            if (visitedBlocks.add(blockPos.asLong()) && !visitor.visit(blockPos, iterations + 1)) {
++                return false;
++            }
++        }
++
++        return true;
      }
 +    // Nix end - Reuse entity block intersection scratch set
  

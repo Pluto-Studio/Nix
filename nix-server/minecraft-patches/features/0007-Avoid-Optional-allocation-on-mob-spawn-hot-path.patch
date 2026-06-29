@@ -5,11 +5,11 @@ Subject: [PATCH] Avoid Optional allocation on mob spawn hot path
 
 
 diff --git a/net/minecraft/util/random/WeightedList.java b/net/minecraft/util/random/WeightedList.java
-index 48e1dfb3f9f6514193b71ce20dcc5ee09ca7036f..fb2aadcd2aec0e57c3d8c8e587eb5cb451b11e94 100644
+index a8481259e42aa116e29bccd1e30fdfd91f51a8cc..a910923b3650360cd138c4d6604f21fa24414620 100644
 --- a/net/minecraft/util/random/WeightedList.java
 +++ b/net/minecraft/util/random/WeightedList.java
-@@ -72,6 +72,17 @@ public class WeightedList<E> { // Paper - non-final
-         }
+@@ -82,6 +82,17 @@ public class WeightedList<E> { // Paper - non-final
+         return Optional.of(this.selector.get(selection));
      }
  
 +    // Nix start - Avoid Optional allocation on mob spawn hot path
@@ -27,10 +27,10 @@ index 48e1dfb3f9f6514193b71ce20dcc5ee09ca7036f..fb2aadcd2aec0e57c3d8c8e587eb5cb4
          if (this.selector == null) {
              throw new IllegalStateException("Weighted list has no elements");
 diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
-index f4954f7002a6843eb3ff55560665f6c18d8bf7dc..fe861344b7fd99c294964311b75d9e67d97e9c3b 100644
+index 979727a20d6bfdcbfa72b2e66e37274869543e52..d60b2991a5e93c60661b136ccf57f226e80fd88b 100644
 --- a/net/minecraft/world/level/NaturalSpawner.java
 +++ b/net/minecraft/world/level/NaturalSpawner.java
-@@ -294,14 +294,16 @@ public final class NaturalSpawner {
+@@ -291,14 +291,16 @@ public final class NaturalSpawner {
                          double nearestPlayerDistanceSqr = nearestPlayer.distanceToSqr(xx, yStart, zz);
                          if (level.isLoadedAndInBounds(pos) && isRightDistanceToPlayerAndSpawnPoint(level, chunk, pos, nearestPlayerDistanceSqr)) { // Paper - don't load chunks for mob spawn
                              if (currentSpawnData == null) {
@@ -50,7 +50,7 @@ index f4954f7002a6843eb3ff55560665f6c18d8bf7dc..fe861344b7fd99c294964311b75d9e67
                                  max = currentSpawnData.minCount() + level.random.nextInt(1 + currentSpawnData.maxCount() - currentSpawnData.minCount());
                              }
  
-@@ -461,6 +463,22 @@ public final class NaturalSpawner {
+@@ -458,6 +460,22 @@ public final class NaturalSpawner {
              : mobsAt(level, structureManager, generator, mobCategory, pos, biome).getRandom(random);
      }
  

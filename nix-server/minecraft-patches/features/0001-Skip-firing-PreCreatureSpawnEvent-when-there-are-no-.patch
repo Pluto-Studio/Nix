@@ -5,10 +5,10 @@ Subject: [PATCH] Skip firing PreCreatureSpawnEvent when there are no listeners
 
 
 diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
-index 427573fc142c107d3fcc2be9000316221039ba4c..fab94ac06677e950a82ecb731a58b68578b02c9e 100644
+index e193cbed115663e9ca7a611837d5b8540dda03db..00632cef96c4f64ad439565869df5d48719ac3a2 100644
 --- a/net/minecraft/world/level/NaturalSpawner.java
 +++ b/net/minecraft/world/level/NaturalSpawner.java
-@@ -394,6 +394,8 @@ public final class NaturalSpawner {
+@@ -391,6 +391,8 @@ public final class NaturalSpawner {
      ) {
          // Paper start - PreCreatureSpawnEvent
          EntityType<?> type = currentSpawnData.type();
@@ -17,7 +17,7 @@ index 427573fc142c107d3fcc2be9000316221039ba4c..fab94ac06677e950a82ecb731a58b685
          com.destroystokyo.paper.event.entity.PreCreatureSpawnEvent event = new com.destroystokyo.paper.event.entity.PreCreatureSpawnEvent(
                  org.bukkit.craftbukkit.util.CraftLocation.toBukkit(pos, level),
                  org.bukkit.craftbukkit.entity.CraftEntityType.minecraftToBukkit(type), org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason.NATURAL
-@@ -404,6 +406,8 @@ public final class NaturalSpawner {
+@@ -401,6 +403,8 @@ public final class NaturalSpawner {
              }
              return PreSpawnStatus.CANCELLED;
          }

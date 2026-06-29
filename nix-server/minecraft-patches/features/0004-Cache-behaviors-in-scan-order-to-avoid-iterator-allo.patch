@@ -13,7 +13,7 @@ Two edge cases currently not used by vanilla behavior implementation differ from
 Vanilla behavior priority semantics should be preserved.
 
 diff --git a/net/minecraft/world/entity/ai/Brain.java b/net/minecraft/world/entity/ai/Brain.java
-index a4a97bb95d5cb0def0d37b64632891e5c68de510..af1494d23da9d96208547b7683483b18fb900fd7 100644
+index 2b22bbfac4e324969e7cff368c690ee915d33a66..59f2c7868b8684feca0f4f60ad08135fa17add2c 100644
 --- a/net/minecraft/world/entity/ai/Brain.java
 +++ b/net/minecraft/world/entity/ai/Brain.java
 @@ -47,6 +47,10 @@ public class Brain<E extends LivingEntity> {
@@ -27,7 +27,7 @@ index a4a97bb95d5cb0def0d37b64632891e5c68de510..af1494d23da9d96208547b7683483b18
  
      public static <E extends LivingEntity> Brain.Provider<E> provider(final Collection<? extends SensorType<? extends Sensor<? super E>>> sensorTypes) {
          return new Brain.Provider<>(ImmutableList.of(), sensorTypes, var0 -> List.of());
-@@ -272,15 +276,14 @@ public class Brain<E extends LivingEntity> {
+@@ -268,15 +272,14 @@ public class Brain<E extends LivingEntity> {
      public List<BehaviorControl<? super E>> getRunningBehaviors() {
          List<BehaviorControl<? super E>> runningBehaviours = new ObjectArrayList<>();
  
@@ -49,7 +49,7 @@ index a4a97bb95d5cb0def0d37b64632891e5c68de510..af1494d23da9d96208547b7683483b18
  
          return runningBehaviours;
      }
-@@ -375,11 +378,17 @@ public class Brain<E extends LivingEntity> {
+@@ -371,11 +374,17 @@ public class Brain<E extends LivingEntity> {
                  .computeIfAbsent(activity, key -> Sets.newLinkedHashSet())
                  .add(behavior);
          }
@@ -67,7 +67,7 @@ index a4a97bb95d5cb0def0d37b64632891e5c68de510..af1494d23da9d96208547b7683483b18
      }
  
      public boolean isActive(final Activity activity) {
-@@ -406,35 +415,59 @@ public class Brain<E extends LivingEntity> {
+@@ -402,35 +411,59 @@ public class Brain<E extends LivingEntity> {
      public void stopAll(final ServerLevel level, final E body) {
          long timestamp = body.level().getGameTime();
  
