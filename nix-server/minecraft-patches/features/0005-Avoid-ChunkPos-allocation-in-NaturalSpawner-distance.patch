@@ -5,10 +5,10 @@ Subject: [PATCH] Avoid ChunkPos allocation in NaturalSpawner distance check
 
 
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index ca1725b9ad40f41e241447e14948ee4116c3e4c9..1d2d3dc37c846a92ed1fdff0a5f26853353ca27b 100644
+index 02bd74f2ed7f34233e3543c8e70ae754adb8aa25..648bf20822705ab6da9ecc1b92fa0a1f75738274 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
-@@ -2718,6 +2718,23 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+@@ -2719,6 +2719,23 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
          // Paper end - rewrite chunk system
      }
  
