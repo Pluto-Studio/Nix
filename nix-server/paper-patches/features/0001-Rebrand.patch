@@ -5,16 +5,16 @@ Subject: [PATCH] Rebrand
 
 
 diff --git a/src/main/java/com/destroystokyo/paper/console/PaperConsole.java b/src/main/java/com/destroystokyo/paper/console/PaperConsole.java
-index 6ee39b534b8d992655bc0cef3c299d12cbae0034..d9f1fbef27e00e1aa46ae96c6d7e87b8ce759030 100644
+index 43006c22f26b9b3ff83d6d9511a8f29921b7f46d..92a98428ccd74bf683a2669694e709dd2e0aa85e 100644
 --- a/src/main/java/com/destroystokyo/paper/console/PaperConsole.java
 +++ b/src/main/java/com/destroystokyo/paper/console/PaperConsole.java
-@@ -20,7 +20,7 @@ public final class PaperConsole extends SimpleTerminalConsole {
+@@ -21,7 +21,7 @@ public final class PaperConsole extends SimpleTerminalConsole {
      @Override
      protected LineReader buildReader(LineReaderBuilder builder) {
          builder
 -                .appName("Paper")
 +                .appName("Nix") // Nix - Rebrand
-                 .variable(LineReader.HISTORY_FILE, java.nio.file.Paths.get(".console_history"))
+                 .variable(LineReader.HISTORY_FILE, PaperCacheDir.moveFromServerRootAndGet(".console_history", "console_history"))
                  .completer(new ConsoleCommandCompleter(this.server))
                  .option(LineReader.Option.COMPLETE_IN_WORD, true);
 diff --git a/src/main/java/io/papermc/paper/ServerBuildInfoImpl.java b/src/main/java/io/papermc/paper/ServerBuildInfoImpl.java

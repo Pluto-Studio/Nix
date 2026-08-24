@@ -7,7 +7,7 @@ Replace the traversal scratch set used by Entity#checkInsideBlocks with a LongAr
 Entity block-intersection traversal is capped at 16 movement iterations, so the scratch set usually remains small enough for linear lookup to be cheaper than a LongOpenHashSet.
 
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
-index 1530810cdb74810e37e3e22ce4fcda4ee7511055..aa54becfdcdbf579b817d4c1e70479d7773172e9 100644
+index d958c4717739e588c5f8985dec5d215c745f49fc..fd010404e8071bb52271a2d42da3f1b1103ffb33 100644
 --- a/net/minecraft/world/entity/Entity.java
 +++ b/net/minecraft/world/entity/Entity.java
 @@ -354,6 +354,7 @@ public abstract class Entity
@@ -18,7 +18,7 @@ index 1530810cdb74810e37e3e22ce4fcda4ee7511055..aa54becfdcdbf579b817d4c1e70479d7
      private final InsideBlockEffectApplier.StepBasedCollector insideEffectCollector = new InsideBlockEffectApplier.StepBasedCollector();
      private CustomData customData = CustomData.EMPTY;
      // CraftBukkit start
-@@ -1836,10 +1837,13 @@ public abstract class Entity
+@@ -1837,10 +1838,13 @@ public abstract class Entity
          boolean debugEntityBlockIntersections = this.level instanceof ServerLevel serverLevel
              && serverLevel.getServer().debugSubscribers().hasAnySubscriberFor(DebugSubscriptions.ENTITY_BLOCK_INTERSECTIONS);
          AtomicInteger iterations = new AtomicInteger();
