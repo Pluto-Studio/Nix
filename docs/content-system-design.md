@@ -72,7 +72,7 @@ A plugin-registered Paper `DataComponentType` used for server-side state. It may
 
 #### 2.1.6 Bukkit View
 
-A compatibility view over a Runtime Item Stack. It exposes the stack's Vanilla Components and represents its type as the Vanilla Material, but does not expose Custom Components through Bukkit's Data Component API. This is not a Client Projection.
+A compatibility view over a Runtime Item Stack. It represents a Custom Item Type as its Vanilla Material through `getType()`, while custom identity remains available through `getItemType()`. Vanilla and Custom Components remain accessible through Paper's Data Component API. This is not a Client Projection.
 
 #### 2.1.7 Client Projection
 
@@ -80,7 +80,7 @@ A transient vanilla-compatible stack derived when an item is sent to an unmodifi
 
 #### 2.1.8 Persistent Form
 
-A vanilla-loadable stack written outside process memory. Vanilla Components use Minecraft's ordinary item component representation; custom identity and per-stack Custom Component state use a Recovery Envelope.
+A vanilla-loadable stack written outside process memory. Vanilla Components use Minecraft's ordinary item component representation; custom identity and the persistent per-stack Custom Component patch use a Recovery Envelope.
 
 #### 2.1.9 Recovery Envelope
 
@@ -718,7 +718,7 @@ ItemStack stack = ...;
 stack.getItemType().getKey();                  // my_plugin:healing_apple
 stack.getType();                               // Material.APPLE compatibility
 stack.getData(DataComponentTypes.FOOD);        // Vanilla Component
-stack.getData(MyComponents.HEALING_STRENGTH);  // Custom Component overload
+stack.getData(MyComponents.HEALING_STRENGTH);  // Custom Component
 ```
 
 For a vanilla apple, `getItemType().getKey()` is `minecraft:apple` and `getType()` is also `Material.APPLE`. The proposed `getItemType()` returns Paper's existing registry-backed `ItemType`, which already implements `Keyed`; a separate bare key accessor is unnecessary.
@@ -795,7 +795,7 @@ Data Component storage has no stable iteration-order contract. Projection theref
 
 If both modifiers read the current lore and append one line, the resulting order is canonical lore, year line, then expiry line.
 
-Projection is a hot synchronous path used for outbound stacks and projected remote-state/hash comparison. Modifiers must be bounded, non-blocking, and free of I/O. Cheap allocation and in-memory lookups are acceptable; database, filesystem, network, waiting, and expensive computation are not. Time-dependent presentation such as an event-expired lore marker is allowed, but the operation must use the context's captured time or another cheap in-memory snapshot. The same projected result should be reused for packet output and remote-state recording so a time boundary cannot produce two different representations in one synchronization operation.
+Projection is a hot synchronous path used for outbound stacks and projected remote-state/hash comparison. Modifiers must be bounded, non-blocking, and free of I/O. Cheap allocation and in-memory lookups are acceptable; database, filesystem, network, waiting, and expensive computation are not. The same projected result should be reused for packet output and remote-state recording.
 
 Each modifier executes in its own framework-managed transaction. `ProjectionOutput` records a small undo log containing the value of every Vanilla Component immediately before that modifier first writes it. If the modifier throws or its touched output fails validation, Nix restores those values, removes restoration entries introduced only by that failed modifier, reports the failure with rate limiting keyed to its item type and binding, and continues with later modifiers. Successfully committed earlier modifiers remain visible to later ones. Fatal VM failures are not part of this recovery contract.
 
@@ -811,7 +811,7 @@ The transaction is internal to Nix; plugin code receives only `ProjectionOutput`
 
 Client Projection includes the same `nix:item` Recovery Envelope used by the Persistent Form. This lets a full projected stack returned by the client, notably through creative-mode slot packets, recover its custom identity without a connection-scoped projection-token ledger. The client does not interpret the envelope; it only preserves and returns opaque `CUSTOM_DATA`.
 
-Envelope encoding must be canonical and deterministic. Runtime stacks with equal custom identity and Custom Component patches must produce equal envelope values, so the metadata does not prevent otherwise equal stacks from stacking. Different custom identities or component state should remain unequal, matching their server-side stack identity.
+Envelope encoding must be canonical and deterministic. Runtime stacks with equal custom identity and persistent Custom Component patches must produce equal envelope values, so the metadata does not prevent otherwise equal stacks from stacking. Different custom identities or persistent Custom Component state should remain unequal.
 
 The projection builder automatically records the canonical value of each Vanilla Component immediately before the first modifier writes or unsets it. Client Projection extends `nix:item` with this minimal restoration patch:
 
@@ -921,13 +921,13 @@ Minecraft 26.2 encodes an `ItemStack` through a codec with `id`, `count`, and an
 The envelope field names and value encoding are internal persistence details rather than public API, but the reserved subtree contains:
 
 - an optional Custom Item Type key;
-- the per-stack Custom Component patch.
+- the persistent per-stack Custom Component patch.
 
-Presence of the inner `item` field means the Persistent Form represents a Custom Item Type. Its absence means the outer vanilla item identity remains authoritative and only Custom Components are being carried.
+Presence of the inner `item` field means the Persistent Form represents a Custom Item Type. Its absence means the outer vanilla item identity remains authoritative and only persistent Custom Components are being carried.
 
-Type-default Custom Component values are not duplicated. This mirrors vanilla stack patch semantics and allows an updated type default to affect existing stacks that did not override it. A vanilla Item Stack carrying Custom Components omits the custom item identity field and persists only its Custom Component patch.
+Type-default Custom Component values are not duplicated. This mirrors vanilla stack patch semantics and allows an updated type default to affect existing stacks that did not override it. A vanilla Item Stack carrying Custom Components omits the custom item identity field and persists only the persistent portion of its Custom Component patch.
 
-Vanilla Components remain in the outer ordinary component patch and are authoritative on recovery. The envelope is authoritative only for custom identity and Custom Component state. Nix does not store a projection baseline or perform a three-way merge.
+Vanilla Components remain in the outer ordinary component patch and are authoritative on recovery. The envelope is authoritative only for custom identity and persistent Custom Component state. Nix does not store a projection baseline or perform a three-way merge.
 
 Custom Components cannot remain as ordinary top-level entries in the Persistent Form. Without Nix their registry keys and codecs are unavailable, so vanilla cannot reliably decode the item component patch. Nesting their encoded values under the known `minecraft:custom_data` component keeps them opaque and vanilla-loadable.
 
@@ -969,7 +969,7 @@ An unresolved fallback retains `nix:item` when sent to a client as well. This pr
 ### 8.1 Representation, compatibility, and projection
 
 1. One Vanilla Material is shared by Bukkit, Client Projection, and Persistent Form.
-2. Vanilla Components are persisted through Minecraft's ordinary component patch; only custom identity and the per-stack Custom Component patch enter the Recovery Envelope.
+2. Vanilla Components are persisted through Minecraft's ordinary component patch; only custom identity and the persistent per-stack Custom Component patch enter the Recovery Envelope.
 3. There is no persistence projection baseline or three-way merge.
 4. Content registration reuses Paper `PluginBootstrap`; `onLoad()` cannot register new types.
 5. Registered content is immutable for the server run.
