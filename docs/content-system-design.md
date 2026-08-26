@@ -1,10 +1,41 @@
-# Nix Content System Design
+# Nix Content System
 
-## Scope and goals
+## Contents
+
+- [1. Scope, goals, and boundaries](#1-scope-goals-and-boundaries)
+  - [1.1 Scope](#11-scope)
+  - [1.2 Goals](#12-goals)
+  - [1.3 Compatibility representation model](#13-compatibility-representation-model)
+- [2. Domain model and terminology](#2-domain-model-and-terminology)
+  - [2.1 Terms](#21-terms)
+- [3. Runtime item model](#3-runtime-item-model)
+  - [3.1 Minecraft component model](#31-minecraft-component-model)
+  - [3.2 Gameplay hooks](#32-gameplay-hooks)
+- [4. Public API surface](#4-public-api-surface)
+  - [4.1 Consolidated public API skeleton](#41-consolidated-public-api-skeleton)
+  - [4.2 Public API namespace](#42-public-api-namespace)
+  - [4.3 Registration lifecycle](#43-registration-lifecycle)
+- [5. Runtime and Bukkit representations](#5-runtime-and-bukkit-representations)
+- [6. Client Projection](#6-client-projection)
+  - [6.1 Projection modifiers](#61-projection-modifiers)
+  - [6.2 Current client-to-server authority model](#62-current-client-to-server-authority-model)
+  - [6.3 Projection-aware remote state](#63-projection-aware-remote-state)
+- [7. Persistence and recovery](#7-persistence-and-recovery)
+  - [7.1 Persistent Form](#71-persistent-form)
+  - [7.2 Recovery](#72-recovery)
+- [8. Consolidated decisions](#8-consolidated-decisions)
+
+## 1. Scope, goals, and boundaries
+
+### 1.1 Scope
 
 The Content System extends items only. Blocks and other content types are out of scope.
 
+### 1.2 Goals
+
 A plugin can register a namespaced Custom Item Type into the server's real item registry. While Nix is running, an item stack retains that type and may contain both vanilla and plugin-defined Data Components. Unmodified Minecraft clients, ordinary Bukkit plugins, and worlds opened without Nix must remain usable.
+
+### 1.3 Compatibility representation model
 
 The design distinguishes three compatibility boundaries instead of treating every representation as a projection:
 
@@ -15,49 +46,53 @@ Runtime Item Stack (authoritative)
   └─ Persistent Form
 ```
 
-## Terms
+## 2. Domain model and terminology
 
-### Custom Item Type
+### 2.1 Terms
+
+#### 2.1.1 Custom Item Type
 
 A plugin-owned, namespaced item type registered as a distinct server-side item type for the current server run.
 
-### Runtime Item Stack
+#### 2.1.2 Runtime Item Stack
 
 The authoritative in-memory stack. It retains its Custom Item Type and all effective vanilla and custom component state.
 
-### Vanilla Material
+#### 2.1.3 Vanilla Material
 
 The `org.bukkit.Material` selected by a Custom Item Type for all vanilla compatibility boundaries: the Bukkit type, Client Projection base, and Persistent Form item identity.
 
-### Vanilla Component
+#### 2.1.4 Vanilla Component
 
 A Data Component whose type and semantics are understood by an unmodified Minecraft client.
 
-### Custom Component
+#### 2.1.5 Custom Component
 
 A plugin-registered Paper `DataComponentType` used for server-side state. It may be attached to either a vanilla or Custom Item Stack. An unmodified client does not understand its type or value. Custom types use Paper's existing `DataComponentType.Valued<T>` or `DataComponentType.NonValued` and the existing Bukkit `ItemStack` component methods; there is no parallel `CustomDataComponentType` API.
 
-### Bukkit View
+#### 2.1.6 Bukkit View
 
 A compatibility view over a Runtime Item Stack. It exposes the stack's Vanilla Components and represents its type as the Vanilla Material, but does not expose Custom Components through Bukkit's Data Component API. This is not a Client Projection.
 
-### Client Projection
+#### 2.1.7 Client Projection
 
 A transient vanilla-compatible stack derived when an item is sent to an unmodified client. Custom Components are omitted as top-level component types, while their persistent patch and the custom identity travel as opaque `nix:item` recovery metadata.
 
-### Persistent Form
+#### 2.1.8 Persistent Form
 
 A vanilla-loadable stack written outside process memory. Vanilla Components use Minecraft's ordinary item component representation; custom identity and per-stack Custom Component state use a Recovery Envelope.
 
-### Recovery Envelope
+#### 2.1.9 Recovery Envelope
 
 Opaque Nix metadata nested in `minecraft:custom_data` in a Persistent Form or Client Projection. It is not present on a successfully recovered custom Runtime Item Stack. Client Projection may extend it with projection-only restoration data.
 
-### Vanilla fallback
+#### 2.1.10 Vanilla fallback
 
 A vanilla stack using the Custom Item Type's Vanilla Material and the Vanilla Components found in its Persistent Form. Nix leaves an item in this form for the current load when its custom type or any present custom component cannot be resolved safely. The intact Recovery Envelope remains available for a future load.
 
-## Minecraft component model
+## 3. Runtime item model
+
+### 3.1 Minecraft component model
 
 Modern Minecraft item behavior is a combination of the `Item` implementation, type-default Data Components, and the per-stack component patch:
 
@@ -78,6 +113,8 @@ A Custom Item Type should therefore use vanilla components directly whenever the
 
 The configured Vanilla Material is representation-only and does not donate its type-default components to the Runtime Custom Item Type. The custom type begins with Minecraft's generic item defaults plus only the defaults explicitly declared by its registration builder. For example, choosing `DIAMOND_SWORD` does not implicitly add `TOOL`, `WEAPON`, durability, attributes, repair, or enchantability. Client Projection reconciles the explicit canonical state against the Vanilla Material prototype and emits removals for vanilla defaults absent at runtime.
 
+### 3.2 Gameplay hooks
+
 Custom Item Types are not limited to a generic NMS `Item` plus Bukkit event listeners. Their registration builder accepts stable, typed item hooks whose contexts/results expose Bukkit/Paper and Content System types rather than NMS. An internal bridge `Item` dispatches corresponding Minecraft behavior into an immutable hook table. Vanilla Components remain preferred for behavior they already model, while hooks cover behavior requiring code.
 
 ```java
@@ -88,9 +125,13 @@ builder.addHook(ItemHooks.ON_USE, context -> {
 });
 ```
 
+#### 3.2.1 Hook registration and callback model
+
 `addHook` has map/set semantics, not list semantics: each Item Type has at most one callback for a given hook descriptor, and a later call for the same hook replaces the earlier callback. A missing callback directly runs the bridge item's vanilla default behavior. A callback may extend that behavior through `defaultBehavior()`/`runDefaultBehavior()`, or replace it by not calling the default. Like repeated Java `super` calls, every explicit default invocation executes the underlying behavior again; Content System does not impose a defensive once-only restriction.
 
 Hook callbacks are shared for the lifetime of the registered Item Type. They may capture immutable configuration and plugin service references, but never per-stack, per-player, or per-invocation mutable state; all per-stack state belongs in Data Components.
+
+#### 3.2.2 Hook catalog and compatibility boundary
 
 The stable gameplay hook catalog is:
 
@@ -127,6 +168,8 @@ Container capability
 
 Slot-stacking overrides and custom damage-source selection are deferred until stable transaction and damage APIs are designed. Client presentation hooks such as name, tooltip, glint, durability bar, and use animation are deliberately absent; they use Vanilla Components and Projection Modifiers. Type properties such as crafting remainder remain registration builder data rather than callbacks.
 
+#### 3.2.3 Interaction hooks
+
 The three held-item interaction hooks share authoritative player, live Bukkit stack, and Bukkit `EquipmentSlot.HAND`/`OFF_HAND` fields through `HeldItemContext` without forcing the same result type. The consolidated API skeleton defines their exact interfaces.
 
 `ItemInteractionResult` provides pass, fail, handled success, handled-without-swing consume, and try-empty-hand outcomes. A plugin-created `success()` always maps to server-swing success; Content System does not expose construction of NMS client-swing success because an unmodified client may not predict custom behavior. A result obtained from `defaultBehavior()` retains exact underlying vanilla swing semantics when propagated unchanged. `tryEmptyHand()` is valid for the block-use pipeline.
@@ -137,11 +180,15 @@ The replacement is copied immediately and may be vanilla or custom. ON_USE_ON_BL
 
 `ON_USE_ON_BLOCK`'s `tryEmptyHand()` asks the interaction pipeline to continue with the clicked block's empty-hand behavior. Its `clickedBlock()` is live, while `interactionPoint()` is a defensive copy whose mutation cannot change the actual hit result.
 
+#### 3.2.4 Active-use hooks
+
 `ON_USE_TICK` exposes the non-player-capable Bukkit `LivingEntity`, live active stack, active hand, the exact pre-decrement remaining ticks, and elapsed used ticks. It is a void callback with an explicitly callable default operation. The hook remains at the vanilla `Item#onUseTick` position: consumable particles and sounds run first, and on the server a present `KINETIC_WEAPON` component executes instead of the Item hook, so Nix does not invoke `ON_USE_TICK` for that tick.
 
 `ON_FINISH_USE` runs when an active use completes normally. Its context contains the `LivingEntity`, live active stack, and hand, and its default operation returns the generic Item's component-driven finish result. The callback directly returns a non-null Bukkit `ItemStack`: the context stack keeps in-place changes, another returned stack is snapshotted before installation, and `ItemStack.empty()` consumes it completely. The outer ItemStack pipeline applies `USE_REMAINDER` and use-cooldown component side effects after the hook result.
 
 `ON_RELEASE_USE` runs when active use is released or interrupted. It exposes the `LivingEntity`, live active stack, hand, remaining ticks, and used ticks. Its explicit `ItemReleaseUseResult` replaces NMS's opaque boolean: `APPLY_AFTER_USE_EFFECTS` applies `USE_REMAINDER` and cooldown after the callback, while `SKIP_AFTER_USE_EFFECTS` does not. Either result still ends active use.
+
+#### 3.2.5 Mining and block capability hooks
 
 `CAN_DESTROY_BLOCK` mirrors the built-in Item capability using a `LivingEntity`, live stack, live Bukkit block, and captured `BlockData`, and directly returns boolean. It is not a security boundary or correct-tool-for-drops test. Nix preserves CraftBukkit/Paper behavior: false pre-cancels `BlockBreakEvent`, which another plugin may un-cancel. Dynamic server-only answers can produce client prediction rollback; callers that need the client to know a static creative-breaking restriction should encode it in the projected vanilla `TOOL` component instead.
 
@@ -151,9 +198,13 @@ The replacement is copied immediately and may be vanilla or custom. ON_USE_ON_BL
 
 `ON_MINE_BLOCK` runs after the block has normally been removed. It receives the player, live main-hand stack, a defensively copied location, and pre-removal `BlockData`; it deliberately does not expose a misleading live block that is usually air by then. The explicit result only chooses whether to award the item-used statistic. Its default applies `TOOL.damagePerBlock` durability behavior and returns the corresponding statistic outcome; neither result changes the already-decided removal or loot eligibility.
 
+#### 3.2.6 Combat hooks
+
 `ATTACK_DAMAGE_BONUS` receives the attacker, victim, exact live weapon stack, damage-before-bonus, and Bukkit `DamageSource`, and returns a finite additive float; negative bonuses are valid. Nix adds a source-compatible Item overload carrying stack and attacker and changes the Player and Mob call sites to use it. The overload delegates to the existing vanilla signature, preserving existing subclasses and calculation order, while the custom bridge can read per-stack components.
 
 `ON_HURT_ENTITY` and `AFTER_HURT_ENTITY` share attacker, victim, and live weapon context and are void callbacks after successful damage to a living victim. The first runs before enchantment post-attack effects. The latter runs afterwards and before `WEAPON.itemDamagePerAttack`, but only in vanilla paths that invoke it: the stack must have `WEAPON`, and the current Mob attack path does not call it. Failed or event-cancelled damage calls neither hook. Combat APIs consistently name the attacked entity `victim`; non-attack APIs such as living-entity interaction retain `target`.
+
+#### 3.2.7 Lifecycle and container hooks
 
 `INVENTORY_TICK` exposes the owning Bukkit `Entity` as `entity()`, live stack, and nullable equipment slot; null means ordinary inventory storage and no inventory index is synthesized. It is a server-only, once-per-tick void callback and a hot hook: callbacks must remain low-cost, non-blocking, and free of I/O.
 
@@ -163,15 +214,21 @@ The replacement is copied immediately and may be vanilla or custom. ON_USE_ON_BL
 
 `CAN_FIT_INSIDE_CONTAINER_ITEMS` uses a stack-only result context and returns boolean. Nix adds a compatible stack-aware Item overload and changes the bundle and container-item-slot callers, allowing per-stack Custom Components while delegating vanilla items to the original type-level method. Dynamic server-only answers may require inventory resynchronization because the unmodified client evaluates its projected vanilla item.
 
+#### 3.2.8 Execution and failure policy
+
 Capability and numeric query hooks (`CAN_DESTROY_BLOCK`, `DESTROY_SPEED`, `IS_CORRECT_TOOL_FOR_DROPS`, `ATTACK_DAMAGE_BONUS`, and `CAN_FIT_INSIDE_CONTAINER_ITEMS`) receive live objects but are read-only by API contract: callbacks are synchronous, low-cost, non-blocking, free of I/O and side effects, and cannot assume one evaluation. This is a documentation-level contract, not a runtime copy, mutation check, or rollback mechanism. Side effects belong in action hooks or Bukkit events.
 
 A non-fatal plugin callback exception or invalid callback result is rate-limited by Item/hook/registrant and falls back to the default behavior. If the callback completed one or more default calls, the last successfully completed default result is reused rather than adding another execution; otherwise fallback executes the default once. Action side effects performed before failure are not rolled back. An uncaught failure from the default behavior itself is distinguished from callback failure, is never retried or disguised as plugin fallback, and propagates as an internal server exception. One callback failure does not permanently disable it. Registrant identity is diagnostic metadata, not namespace ownership.
 
 Gameplay hooks run synchronously at the corresponding built-in Paper/Minecraft Item call site and do not schedule, advance, delay, duplicate, or reorder Bukkit/Paper events. Event cancellation and state mutation therefore affect hook reachability and context exactly as they affect that built-in method. Enriched overloads retain the old call site. `ON_CRAFTED` intentionally unifies player and automated entry points, but each remains at its respective built-in crafting callback. Event-order examples document the inspected pinned version rather than define a separate Nix compatibility schedule; an upstream event move relative to the Item call is inherited. Callbacks never auto-hop unsupported asynchronous plugin calls onto the server thread and must not block it.
 
+#### 3.2.9 Handler typing and context lifetime
+
 Hook descriptors use one `ItemHook<C, R>` type with `ItemHookHandler<C, R>` for result callbacks. Void descriptors use `R = Void`, but Java callers bind a natural void lambda through an `addHook(ItemHook<C, Void>, Consumer<C>)` overload; the internal adapter supplies the null `Void` value. Other result types use the generic overload and remain compile-time checked. Primitive boolean and float results may box; specialization is deferred until profiling demonstrates a material cost.
 
 Hook contexts are intended for synchronous callback-scoped use, but Content System does not invalidate them, clear captured references, inspect retention, or guard default calls after callback return. Retaining a context or invoking its default operation later is unsupported plugin behavior; Nix adds no runtime handling for it.
+
+### 3.3 Canonical component example
 
 For example, a healing apple should normally contain vanilla `FOOD` and `CONSUMABLE` components in memory rather than gaining them only during projection:
 
@@ -183,7 +240,11 @@ builder
     .component(MyComponents.HEALING_STRENGTH, 4);
 ```
 
-## Consolidated public API skeleton
+## 4. Public API surface
+
+### 4.1 Consolidated public API skeleton
+
+#### 4.1.1 Core registry and component builders
 
 The following pseudo-Java fixes the public type relationships and method shapes; ordinary nullness, contract, and API-status annotations are omitted for readability. Registry writes retain Paper's compose/register/builder flow.
 
@@ -224,6 +285,8 @@ public interface DataComponentTypeRegistryEntry {
     }
 }
 ```
+
+#### 4.1.2 Typed declarations and registration example
 
 Custom Components are transient by default. A Valued Custom Component becomes persistent through `persistent(codec)`. A Non-Valued Custom Component becomes persistent through no-argument `persistent()`; its presence/removal needs no plugin codec and is represented directly in the Recovery Envelope.
 
@@ -273,6 +336,8 @@ bootstrapContext.getLifecycleManager().registerEventHandler(
 );
 ```
 
+#### 4.1.3 Hook descriptors and default-composition contracts
+
 Hook descriptors and default-composition contracts:
 
 ```java
@@ -311,6 +376,8 @@ public final class ItemHooks {
     public static final ItemHook<ItemContainerFitContext, Boolean> CAN_FIT_INSIDE_CONTAINER_ITEMS;
 }
 ```
+
+#### 4.1.4 Interaction contexts and results
 
 Interaction contexts and results:
 
@@ -353,6 +420,8 @@ public interface ItemUseResult extends ItemInteractionResult {
     static ItemUseResult consume(ItemStack transformedHeldItem) { /* snapshot */ }
 }
 ```
+
+#### 4.1.5 Active-use, mining, combat, lifecycle, and capability contexts
 
 Active-use, mining, combat, lifecycle, and capability contexts:
 
@@ -446,6 +515,8 @@ public interface ItemContainerFitContext extends DefaultResultBehavior<Boolean> 
 }
 ```
 
+#### 4.1.6 Projection API
+
 Projection API:
 
 ```java
@@ -483,7 +554,7 @@ public interface ProjectionOutput {
 }
 ```
 
-## Public API namespace
+### 4.2 Public API namespace
 
 All Content System additions and their server implementations use the project-owned package namespace:
 
@@ -493,7 +564,7 @@ club.plutoproject.nix.contentsystem
 
 This includes `ContentSystem`, custom registry entry APIs, and projection APIs. Existing Bukkit/Paper classes gain methods referring to these types where integration requires it; Content System types are not placed into an upstream-owned package merely to avoid imports.
 
-## Registration lifecycle
+### 4.3 Registration lifecycle
 
 Custom Item Types and Custom Component Types are registered only during Paper's existing `PluginBootstrap` lifecycle. Nix does not introduce a second bootstrap phase.
 
@@ -534,7 +605,7 @@ public final class MyBootstrap implements PluginBootstrap {
 
 `onLoad()` may retrieve registered types and initialize plugin-owned services referenced indirectly by bootstrap callbacks, but Nix provides no runtime hook mutation or binding API. Hook callbacks are set only on the bootstrap Item Type registration builder; runtime `setHook`, `removeHook`, and `rebindHook` operations do not exist.
 
-### DFU codec API
+#### 4.3.1 DFU codec API
 
 Persistent Custom Data Components use `com.mojang.serialization.Codec<T>` directly. Codec is supplied by Mojang's separately published DataFixerUpper library rather than by NMS, so the Content System does not reproduce or wrap its combinator API:
 
@@ -554,7 +625,7 @@ public record Soulbound(UUID owner, int level) {
 
 The Nix API publishes an API dependency on the exact DataFixerUpper version used by its pinned Minecraft server (10.0.21 for the currently inspected 26.2 build). Plugins compile against that provided dependency and must not shade or relocate an incompatible private DFU copy. Nix updates the exposed DFU version together with its server dependency. The Content System consumes the codec with internal Minecraft dynamic ops, including `NbtOps`, but does not expose NMS ops classes in its own signatures.
 
-### Typed Data Component references
+#### 4.3.2 Typed Data Component references
 
 Paper's `Registry<DataComponentType>` necessarily erases a custom valued component's Java value type. Plugins therefore predeclare key-backed references that already implement Paper's existing component interfaces:
 
@@ -591,7 +662,7 @@ Soulbound value = stack.getData(MyComponents.SOULBOUND);
 
 Using an unbound reference before its bootstrap registration completes fails with a clear lifecycle error. Registry lookup by raw key remains available but cannot recover the erased Java value type safely.
 
-### Typed Item Type references
+#### 4.3.3 Typed Item Type references
 
 Custom Item Types use the same key-backed declaration pattern with Paper's existing, non-parallel `ItemType`:
 
@@ -615,7 +686,7 @@ stack.getType();                                  // Material.APPLE
 
 Using an unbound Item Type reference to create a stack or query registered properties fails with a lifecycle error. `ItemType` requires no new parallel custom-type interface.
 
-### Content System service
+#### 4.3.4 Content System service
 
 `ContentSystem` is a server-owned runtime service rather than a static utility singleton:
 
@@ -624,9 +695,8 @@ ContentSystem contentSystem = Bukkit.getServer().getContentSystem();
 ```
 
 The instance owns server-lifetime projection, recovery, diagnostics, cache invalidation, and registry-access behavior. Static nested providers under `ContentSystem.RegistryEvents` describe bootstrap registration hooks only; they do not own runtime state and remain usable before the runtime `Server` service is available. Their exact signatures are centralized in the consolidated API skeleton.
-```
 
-## Runtime and Bukkit representations
+## 5. Runtime and Bukkit representations
 
 A Runtime Item Stack remains a real custom stack in server memory:
 
@@ -661,7 +731,7 @@ Calling Bukkit `ItemStack#setType(Material)` on a Custom Item Stack always conve
 
 Bukkit `ItemStack#clone()` creates an independent Runtime Item Stack that retains the real Custom Item Type and both Vanilla and Custom Components. API types do not expose the internal NMS backing.
 
-## Client Projection
+## 6. Client Projection
 
 Client Projection occurs only at the outbound client boundary. It may vary by viewer, for example to account for resource-pack availability, but it must not vary by packet or display scenario for the same viewer. For a given viewer, Runtime Item Stack state, projection revision, and captured operation context, projection is deterministic.
 
@@ -681,7 +751,7 @@ Example: if Bukkit removes `CONSUMABLE` from a healing apple whose Vanilla Mater
 
 Vanilla Components require no per-item projector code merely to survive the boundary. Explicit modifier logic is reserved for intentionally mapping custom semantics into a vanilla approximation that the client can express.
 
-### Projection modifiers
+### 6.1 Projection modifiers
 
 A Custom Item Type may explicitly bind a reusable modifier to a Custom Component Type. The modifier runs when that custom component has an effective value and mutates only the projected Vanilla Components; it does not mutate the Runtime Item Stack. The consolidated API skeleton is the sole definition of the modifier, context, source, and output interfaces.
 
@@ -761,7 +831,7 @@ Later writes to the same component do not replace its recorded canonical value. 
 
 Nix does not keep this patch beside every server inventory item. In normal survival interactions the authoritative Runtime Item Stack never leaves server memory. In creative mode, the projected stack itself carries everything required for restoration. The only per-viewer server state needed is the ordinary ephemeral remote presentation state used for synchronization and hash comparison.
 
-### Current client-to-server authority model
+### 6.2 Current client-to-server authority model
 
 The normal interaction model remains server-authoritative and does not require a general reverse-projection pass. In the current Minecraft 26.2 protocol, `ServerboundSetCreativeModeSlotPacket` is the only standard serverbound packet carrying a complete `ItemStack`. The server handles it only for players with infinite-material/creative authority. Survival inventory clicks return item identity, count, and component hashes through `HashedStack`; the server uses these to track and validate the client's remote view, not to replace authoritative slot contents. Item use and other survival interactions identify a hand, slot, target, or operation while the server reads the authoritative stack it already owns.
 
@@ -769,7 +839,7 @@ Consequently, an ordinary survival client cannot replace custom item state merel
 
 Nix does not sign or encrypt the envelope. Its contents are client-readable, and creative-authority clients may forge them. Custom item data must not serve as an authorization credential or contain secrets.
 
-### Projection-aware remote state
+### 6.3 Projection-aware remote state
 
 Container synchronization must compare the client's remote state against Client Projection, not against the Runtime Item Stack. `HashedStack` includes the item holder, count, hashes of added component values, and removed component types. A client therefore returns hashes for the Vanilla Material and projected component patch, which intentionally differ from the custom type and component patch retained by the server.
 
@@ -821,7 +891,9 @@ Refreshing increments the viewer's projection revision, invalidates projected re
 
 The architectural requirement is that packet encoding, projected hashing, remote-state comparison, and invalidation share one deterministic presentation service; projection cannot exist only as a last-moment `ItemStack` wire-codec rewrite.
 
-## Persistent Form
+## 7. Persistence and recovery
+
+### 7.1 Persistent Form
 
 Persistence is not Client Projection, although both use the same Vanilla Material identity.
 
@@ -863,7 +935,7 @@ The envelope occupies only the reserved `nix:item` subtree. Existing unrelated `
 
 A persistent plugin-registered `DataComponentType.Valued<T>` supplies a public DataFixerUpper codec. `persistent(codec)` means its per-stack set/removal patch participates in `nix:item`; it does not mean the custom type is serialized as an outer vanilla component. A Non-Valued type uses no-argument `persistent()` because Nix only needs to encode marker presence/removal. Without the matching persistence call, either component kind is transient and omitted from Persistent Form and Client Projection recovery metadata. Its per-stack value, marker, or removal patch is lost across save/load and creative round-trips, although a Custom Item Type's transient default naturally reappears when that type is reconstructed.
 
-## Recovery
+### 7.2 Recovery
 
 Conceptual recovery flow:
 
@@ -892,7 +964,9 @@ The fallback retains the complete Recovery Envelope. Nix must not partially reco
 
 An unresolved fallback retains `nix:item` when sent to a client as well. This preserves future recoverability if a full client-side copy returns to the server.
 
-## Consolidated decisions
+## 8. Consolidated decisions
+
+### 8.1 Representation, compatibility, and projection
 
 1. One Vanilla Material is shared by Bukkit, Client Projection, and Persistent Form.
 2. Vanilla Components are persisted through Minecraft's ordinary component patch; only custom identity and the per-stack Custom Component patch enter the Recovery Envelope.
@@ -912,6 +986,9 @@ An unresolved fallback retains `nix:item` when sent to a client as well. This pr
 16. Recovery Envelopes are not signed or encrypted; they are client-readable and untrusted.
 17. Bukkit `ItemStack` is the sole public stack abstraction for vanilla and custom items; there is no separate `NixItemStack` facade.
 18. Custom stacks expose their actual registry-backed `ItemType` separately from the compatibility `Material`, and Bukkit `clone()` preserves custom identity in an independent Runtime Item Stack.
+
+### 8.2 API and registration
+
 19. Fork-specific registration providers are grouped under `ContentSystem.RegistryEvents` rather than branded as `NixRegistryEvents`, while registered values use Paper API types.
 20. `ContentSystem` is a single server-owned runtime service exposed by `Server#getContentSystem()`; its nested registry event providers are static bootstrap descriptors only.
 21. Any Bukkit `setType(Material)` call on a custom stack selects that vanilla registry item, including when the Material equals its compatibility Vanilla Material; old type defaults disappear and the per-stack Vanilla/Custom Component patch remains.
@@ -926,6 +1003,9 @@ An unresolved fallback retains `nix:item` when sent to a client as well. This pr
 30. Custom valued components preserve Paper's existing deeply immutable value invariant; mutation replaces the value through `setData()` rather than mutating an object returned by `getData()`.
 31. Content registration does not declare or enforce per-plugin namespace ownership; plugins may coordinate arbitrary namespaces, while `minecraft` and `nix` are reserved and duplicate keys fail bootstrap.
 32. `vanillaMaterial` controls compatibility representations only and does not inherit that vanilla item's default components into the Runtime Custom Item Type.
+
+### 8.3 Gameplay hooks
+
 33. Custom Item behavior uses a stable typed hook dispatch table on the Item Type registration builder rather than a `CustomItem` class; the internal NMS bridge delegates without exposing NMS classes.
 34. `addHook` sets one callback per hook and later calls replace earlier ones; missing hooks run vanilla defaults, while every explicit context default call executes again like a Java `super` call.
 35. `ItemHooks` is a curated stable gameplay surface rather than a one-to-one mirror of version-specific NMS `Item` methods; client presentation belongs to components and projection.
@@ -954,5 +1034,8 @@ An unresolved fallback retains `nix:item` when sent to a client as well. This pr
 58. Contexts are callback-scoped by contract only; Nix adds no runtime invalidation or delayed-default-call handling.
 59. Registry entries and their codecs, projection modifiers, and gameplay handlers remain active until server shutdown even if the registering plugin is disabled; hot unload is unsupported.
 60. Hook tables are fixed by the bootstrap Item Type builder; runtime set/remove/rebind APIs are absent, while plugin-owned service indirection remains the plugin's responsibility.
+
+### 8.4 Projection and persistence API
+
 61. Projection modifiers mirror Paper component kinds as sibling `ProjectionModifier.Valued<T>` and `.NonValued` functional interfaces.
 62. Both component kinds default transient; valued persistence requires a DFU codec, while non-valued persistence uses an explicit no-argument marker method.
