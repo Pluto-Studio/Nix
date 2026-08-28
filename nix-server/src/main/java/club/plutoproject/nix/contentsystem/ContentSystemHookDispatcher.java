@@ -20,37 +20,11 @@ final class ContentSystemHookDispatcher {
             return defaults.call();
         }
 
-        try {
-            final R result = handler.handle(context);
-            if ((!nullableResult && result == null) || !validResult.test(result)) {
-                throw new InvalidHookResultException();
-            }
-            return result;
-        } catch (final Throwable failure) {
-            if (defaults.isDefaultFailure(failure)) {
-                throwUnchecked(failure);
-            }
-            if (isFatal(failure)) {
-                throw (Error) failure;
-            }
-            ContentSystemDiagnostics.hookFailure(item, hook, failure instanceof InvalidHookResultException ? "invalid-result" : "callback", failure);
-            return fallback(defaults);
+        final R result = handler.handle(context);
+        if ((!nullableResult && result == null) || !validResult.test(result)) {
+            throw new InvalidHookResultException();
         }
-    }
-
-    private static void throwUnchecked(final Throwable failure) {
-        if (failure instanceof Error error) {
-            throw error;
-        }
-        throw (RuntimeException) failure;
-    }
-
-    private static <R> R fallback(final ContentSystemDefaultCall<R> defaults) {
-        return defaults.completed() ? defaults.lastResult() : defaults.call();
-    }
-
-    private static boolean isFatal(final Throwable failure) {
-        return failure instanceof VirtualMachineError || failure instanceof ThreadDeath || failure instanceof LinkageError;
+        return result;
     }
 
     private static final class InvalidHookResultException extends RuntimeException {

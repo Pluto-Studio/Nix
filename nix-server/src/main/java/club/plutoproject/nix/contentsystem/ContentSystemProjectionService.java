@@ -5,6 +5,7 @@ import com.mojang.serialization.DataResult;
 import com.mojang.serialization.DynamicOps;
 import io.papermc.paper.datacomponent.DataComponentAdapter;
 import io.papermc.paper.datacomponent.PaperDataComponentType;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -16,6 +17,9 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.UnaryOperator;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
 import net.minecraft.core.component.DataComponentType;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -30,7 +34,6 @@ import net.minecraft.util.Unit;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ItemStackTemplate;
-import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.BundleContents;
 import net.minecraft.world.item.component.ChargedProjectiles;
 import net.minecraft.world.item.component.CustomData;
@@ -61,7 +64,13 @@ public final class ContentSystemProjectionService {
     static final int MAX_COMPONENT_ENTRIES = 256;
     static final int MAX_ENVELOPE_DEPTH = 64;
 
-    private static final Comparator<DataComponentType<?>> COMPONENT_ORDER = Comparator.comparing(ContentSystemDiagnostics::componentKey);
+    private static final Logger LOGGER = Logger.getLogger("Nix Content System");
+    private static final Comparator<DataComponentType<?>> COMPONENT_ORDER = Comparator.comparing(ContentSystemProjectionService::componentKey);
+
+    private static String componentKey(final DataComponentType<?> type) {
+        final Identifier key = BuiltInRegistries.DATA_COMPONENT_TYPE.getKey(type);
+        return key == null ? type.toString() : key.toString();
+    }
 
     public ItemStack project(final ItemStack runtime, final Player viewer) {
         Objects.requireNonNull(viewer, "viewer");
@@ -71,15 +80,35 @@ public final class ContentSystemProjectionService {
 
         final ItemStack projected = createVanillaBase(runtime);
         final ContentSystemItem customItem = runtime.getItem() instanceof ContentSystemItem custom ? custom : null;
+        final Map<DataComponentType<?>, ProjectionOutputImpl.Capture> restorationValues = new IdentityHashMap<>();
+
+        if (customItem != null
+                && runtime.get(DataComponents.ITEM_MODEL) != null
+                && !runtime.hasNonDefault(DataComponents.ITEM_MODEL)
+                && projected.hasNonDefault(DataComponents.ITEM_MODEL)
+        ) {
+            restorationValues.put(
+                DataComponents.ITEM_MODEL,
+                ProjectionOutputImpl.Capture.of(runtime, DataComponents.ITEM_MODEL)
+            );
+            final Identifier vanillaModel = Objects.requireNonNull(
+                projected.getPrototype().get(DataComponents.ITEM_MODEL)
+            );
+            projected.set(DataComponents.ITEM_MODEL, vanillaModel);
+        }
+
         final ProjectionOutputImpl output = needsProjectionOutput(customItem, runtime)
-            ? new ProjectionOutputImpl(projected, ContentSystemItem.vanillaMaterial(runtime.getItem()))
-            : null;
+                ? new ProjectionOutputImpl(projected, ContentSystemItem.vanillaMaterial(runtime.getItem()))
+                : null;
         if (output != null) {
             this.applyProjectionModifiers(customItem, runtime, viewer, output);
+            output.restorationValues().forEach(
+                (type, capture) -> restorationValues.putIfAbsent(type, capture)
+            );
         }
         projectNestedComponents(projected, viewer);
 
-        final CompoundTag envelope = createEnvelope(runtime, output == null ? Map.of() : output.restorationValues(), true);
+        final CompoundTag envelope = createEnvelope(runtime, restorationValues, true);
         if (shouldAttachEnvelope(runtime, envelope)) {
             attachEnvelope(projected, envelope);
         }
@@ -113,12 +142,11 @@ public final class ContentSystemProjectionService {
             recoverNestedComponents(encoded);
             return encoded;
         }
-        final Tag rawEnvelope = customData.getUnsafe().get(CUSTOM_DATA_KEY);
-        if (!(rawEnvelope instanceof CompoundTag envelope)) {
-            ContentSystemDiagnostics.recoveryFailure(null, "malformed-envelope", new IllegalArgumentException("nix:item is not a compound"));
-            return encoded;
-        }
         try {
+            final Tag rawEnvelope = customData.getUnsafe().get(CUSTOM_DATA_KEY);
+            if (!(rawEnvelope instanceof CompoundTag envelope)) {
+                throw new IllegalArgumentException("nix:item is not a compound");
+            }
             validateEnvelope(envelope);
             final ParsedEnvelope parsed = parseEnvelope(envelope);
             final Item selectedItem = parsed.itemKey() == null ? encoded.getItem() : resolveCustomItem(parsed.itemKey());
@@ -131,15 +159,8 @@ public final class ContentSystemProjectionService {
             removeEnvelope(recovered);
             recoverNestedComponents(recovered);
             return recovered;
-        } catch (final Throwable failure) {
-            if (isFatal(failure)) {
-                throw (Error) failure;
-            }
-            if (failure instanceof RecoveryFailure recoveryFailure) {
-                ContentSystemDiagnostics.recoveryFailure(recoveryFailure.key, recoveryFailure.category, recoveryFailure.getCause());
-            } else {
-                ContentSystemDiagnostics.recoveryFailure(parsedKey(envelope), failureCategory(failure), failure);
-            }
+        } catch (final RuntimeException failure) {
+            LOGGER.log(Level.WARNING, "Content System recovery failed", failure);
             return encoded;
         }
     }
@@ -162,7 +183,7 @@ public final class ContentSystemProjectionService {
     }
 
     private ItemStackTemplate projectTemplate(
-        final ItemStackTemplate template, final Player viewer
+            final ItemStackTemplate template, final Player viewer
     ) {
         final ItemStack nested = new ItemStack(template.item(), template.count(), template.components());
         if (!(nested.getItem() instanceof ContentSystemItem) && !hasCustomComponentState(nested)) {
@@ -181,13 +202,13 @@ public final class ContentSystemProjectionService {
         final ItemStack before = nested.copy();
         final ItemStack recovered = this.recover(nested);
         return sameTemplate(before, recovered)
-            ? template
-            : new ItemStackTemplate(recovered.typeHolder(), recovered.getCount(), recovered.getComponentsPatch());
+                ? template
+                : new ItemStackTemplate(recovered.typeHolder(), recovered.getCount(), recovered.getComponentsPatch());
     }
 
     private void transformNestedComponents(
-        final ItemStack stack,
-        final UnaryOperator<ItemStackTemplate> mapper
+            final ItemStack stack,
+            final UnaryOperator<ItemStackTemplate> mapper
     ) {
         final UseRemainder remainder = stack.get(DataComponents.USE_REMAINDER);
         if (remainder != null) {
@@ -234,8 +255,8 @@ public final class ContentSystemProjectionService {
 
     private static boolean sameTemplate(final ItemStack left, final ItemStack right) {
         return left.typeHolder().equals(right.typeHolder())
-            && left.getCount() == right.getCount()
-            && left.getComponentsPatch().equals(right.getComponentsPatch());
+                && left.getCount() == right.getCount()
+                && left.getComponentsPatch().equals(right.getComponentsPatch());
     }
 
     private static void reconcileVanillaComponents(final ItemStack target, final ItemStack fallback) {
@@ -251,7 +272,7 @@ public final class ContentSystemProjectionService {
         final List<DataComponentType<?>> ordered = new ArrayList<>(types);
         ordered.sort(COMPONENT_ORDER);
         for (final DataComponentType<?> type : ordered) {
-            if (type instanceof ContentSystemDataComponentType<?>) {
+            if (type instanceof CustomDataComponentType<?>) {
                 continue;
             }
             final Object fallbackValue = fallback.get(type);
@@ -274,9 +295,6 @@ public final class ContentSystemProjectionService {
         if (target instanceof ContentSystemItem custom) {
             target = CraftItemType.bukkitToMinecraft(custom.vanillaMaterial());
         }
-        if (target == null || target == Items.AIR) {
-            return ItemStack.EMPTY;
-        }
 
         final ItemStack output = new ItemStack(target, runtime.getCount());
         final Set<DataComponentType<?>> types = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -285,20 +303,14 @@ public final class ContentSystemProjectionService {
         final List<DataComponentType<?>> ordered = new ArrayList<>(types);
         ordered.sort(COMPONENT_ORDER);
         for (final DataComponentType<?> type : ordered) {
-            if (type instanceof ContentSystemDataComponentType<?>) {
-                continue;
-            }
-            if (runtime.getItem() instanceof ContentSystemItem
-                && type == DataComponents.ITEM_MODEL
-                && !runtime.hasNonDefault(type)) {
+            if (type instanceof CustomDataComponentType<?>) {
                 continue;
             }
             final Object runtimeValue = runtime.get(type);
             final Object targetValue = output.get(type);
-            if (runtimeValue == null) {
-                if (targetValue != null) {
-                    output.remove(type);
-                }
+            if (runtimeValue == null && targetValue != null) {
+                // remove components that belongs to vanilla material's default
+                output.remove(type);
             } else if (!Objects.equals(runtimeValue, targetValue) || runtime.hasNonDefault(type)) {
                 setUnchecked(output, type, runtimeValue);
             }
@@ -308,12 +320,12 @@ public final class ContentSystemProjectionService {
 
     private static boolean hasCustomComponentState(final ItemStack runtime) {
         for (final DataComponentType<?> type : runtime.getComponents().keySet()) {
-            if (type instanceof ContentSystemDataComponentType<?>) {
+            if (type instanceof CustomDataComponentType<?>) {
                 return true;
             }
         }
         for (final Map.Entry<DataComponentType<?>, Optional<?>> entry : runtime.getComponentsPatch().entrySet()) {
-            if (entry.getKey() instanceof ContentSystemDataComponentType<?>) {
+            if (entry.getKey() instanceof CustomDataComponentType<?>) {
                 return true;
             }
         }
@@ -325,7 +337,7 @@ public final class ContentSystemProjectionService {
             return true;
         }
         for (final DataComponentType<?> type : runtime.getComponents().keySet()) {
-            if (type instanceof ContentSystemDataComponentType<?> custom && custom.defaultProjection() != null) {
+            if (type instanceof CustomDataComponentType<?> custom && custom.defaultProjection() != null) {
                 return true;
             }
         }
@@ -333,14 +345,14 @@ public final class ContentSystemProjectionService {
     }
 
     private void applyProjectionModifiers(
-        final @Nullable ContentSystemItem item,
-        final ItemStack runtime,
-        final Player viewer,
-        final ProjectionOutputImpl output
+            final @Nullable ContentSystemItem item,
+            final ItemStack runtime,
+            final Player viewer,
+            final ProjectionOutputImpl output
     ) {
         final Set<DataComponentType<?>> effectiveCustom = Collections.newSetFromMap(new IdentityHashMap<>());
         for (final DataComponentType<?> type : runtime.getComponents().keySet()) {
-            if (type instanceof ContentSystemDataComponentType<?>) {
+            if (type instanceof CustomDataComponentType<?>) {
                 effectiveCustom.add(type);
             }
         }
@@ -348,7 +360,7 @@ public final class ContentSystemProjectionService {
         final Map<DataComponentType<?>, ContentSystemItem.ProjectionBinding> itemBindings = new IdentityHashMap<>();
         if (item != null) {
             for (final ContentSystemItem.ProjectionBinding binding : item.projectionBindings()) {
-                if (binding.component() instanceof ContentSystemDataComponentType<?>) {
+                if (binding.component() instanceof CustomDataComponentType<?>) {
                     itemBindings.put(binding.component(), binding);
                 }
             }
@@ -357,71 +369,60 @@ public final class ContentSystemProjectionService {
         final List<DataComponentType<?>> defaultOrder = new ArrayList<>(effectiveCustom);
         defaultOrder.sort(COMPONENT_ORDER);
         final ContentSystemProjectionContext context = new ContentSystemProjectionContext(
-            viewer,
-            new ContentSystemProjectionSource(runtime)
+                viewer,
+                new ContentSystemProjectionSource(runtime)
         );
         for (final DataComponentType<?> type : defaultOrder) {
             if (itemBindings.containsKey(type)) {
                 continue;
             }
-            final ContentSystemDataComponentType<?> custom = (ContentSystemDataComponentType<?>) type;
+            final CustomDataComponentType<?> custom = (CustomDataComponentType<?>) type;
             final ProjectionModifier modifier = custom.defaultProjection();
             if (modifier != null) {
-                applyModifier(item, type, "default", modifier, context, runtime, output);
+                applyModifier(type, modifier, context, runtime, output);
             }
         }
 
-        if (item == null) {
-            return;
-        }
-        for (final ContentSystemItem.ProjectionBinding binding : item.projectionBindings()) {
-            if (!(binding.component() instanceof ContentSystemDataComponentType<?>) || !effectiveCustom.contains(binding.component())) {
-                continue;
+        if (item != null) {
+            for (final ContentSystemItem.ProjectionBinding binding : item.projectionBindings()) {
+                if (!(binding.component() instanceof CustomDataComponentType<?>) || !effectiveCustom.contains(binding.component())) {
+                    continue;
+                }
+                if (!binding.suppressed() && binding.modifier() != null) {
+                    applyModifier(binding.component(), binding.modifier(), context, runtime, output);
+                }
             }
-            if (!binding.suppressed() && binding.modifier() != null) {
-                applyModifier(item, binding.component(), "item", binding.modifier(), context, runtime, output);
-            }
         }
+        validateProjectionOutput(output);
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})
     private static void applyModifier(
-        final @Nullable ContentSystemItem item,
-        final DataComponentType<?> type,
-        final String bindingName,
-        final ProjectionModifier modifier,
-        final ProjectionContext context,
-        final ItemStack runtime,
-        final ProjectionOutputImpl output
+            final DataComponentType<?> type,
+            final ProjectionModifier modifier,
+            final ProjectionContext context,
+            final ItemStack runtime,
+            final ProjectionOutputImpl output
     ) {
-        final ProjectionOutputImpl.Transaction transaction = output.beginTransaction();
-        try {
-            final Object apiValue = apiValue(runtime, type);
-            if (modifier instanceof ProjectionModifier.Valued valued) {
-                valued.apply(context, apiValue, output);
-            } else if (modifier instanceof ProjectionModifier.NonValued nonValued) {
-                nonValued.apply(context, output);
-            } else {
-                throw new IllegalArgumentException("Unknown projection modifier type");
-            }
-            transaction.commit();
-        } catch (final Throwable failure) {
-            if (isFatal(failure)) {
-                throw (Error) failure;
-            }
-            transaction.rollback();
-            if (item != null) {
-                ContentSystemDiagnostics.projectionFailure(item, ContentSystemDiagnostics.componentKey(type), bindingName, failure);
-            } else {
-                final Identifier itemKey = BuiltInRegistries.ITEM.getKey(runtime.getItem());
-                ContentSystemDiagnostics.projectionFailure(
-                    itemKey == null ? "unknown" : itemKey.toString(),
-                    ContentSystemDiagnostics.componentKey(type),
-                    bindingName,
-                    failure
-                );
-            }
+        final Object apiValue = apiValue(runtime, type);
+        if (modifier instanceof ProjectionModifier.Valued valued) {
+            valued.apply(context, apiValue, output);
+        } else if (modifier instanceof ProjectionModifier.NonValued nonValued) {
+            nonValued.apply(context, output);
+        } else {
+            throw new IllegalArgumentException("Unknown projection modifier type");
         }
+    }
+
+    private static void validateProjectionOutput(final ProjectionOutputImpl output) {
+        final DataResult<ItemStack> validation = ItemStack.validateStrict(output.projected);
+        if (validation.isError()) {
+            throw new IllegalArgumentException(
+                    "Projection modifiers produced an invalid item stack: "
+                            + validation.error().map(DataResult.Error::message).orElse("unknown error")
+            );
+        }
+        output.validateRestorationValues();
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})
@@ -438,9 +439,9 @@ public final class ContentSystemProjectionService {
     }
 
     private static CompoundTag createEnvelope(
-        final ItemStack runtime,
-        final Map<DataComponentType<?>, ProjectionOutputImpl.Capture> restorationValues,
-        final boolean projection
+            final ItemStack runtime,
+            final Map<DataComponentType<?>, ProjectionOutputImpl.Capture> restorationValues,
+            final boolean projection
     ) {
         final CompoundTag envelope = new CompoundTag();
         final boolean customItem = runtime.getItem() instanceof ContentSystemItem;
@@ -455,7 +456,7 @@ public final class ContentSystemProjectionService {
         final TreeMap<String, Tag> encodedComponents = new TreeMap<>();
         final List<String> removedComponents = new ArrayList<>();
         for (final Map.Entry<DataComponentType<?>, Optional<?>> entry : runtime.getComponentsPatch().entrySet()) {
-            if (!(entry.getKey() instanceof ContentSystemDataComponentType<?> custom) || custom.persistenceCodec() == null) {
+            if (!(entry.getKey() instanceof CustomDataComponentType<?> custom) || custom.persistenceCodec() == null) {
                 continue;
             }
             final Identifier key = BuiltInRegistries.DATA_COMPONENT_TYPE.getKey(entry.getKey());
@@ -465,8 +466,8 @@ public final class ContentSystemProjectionService {
             if (entry.getValue().isPresent()) {
                 final Object value = entry.getValue().get();
                 final Tag encoded = custom.valued()
-                    ? encode(custom.persistenceCodec(), value)
-                    : StringTag.valueOf("present");
+                        ? encode(custom.persistenceCodec(), value)
+                        : StringTag.valueOf("present");
                 encodedComponents.put(key.toString(), encoded);
             } else {
                 removedComponents.add(key.toString());
@@ -532,7 +533,7 @@ public final class ContentSystemProjectionService {
             return true;
         }
         if (generatedEnvelope.contains(COMPONENTS_KEY) || generatedEnvelope.contains(REMOVED_KEY)
-            || generatedEnvelope.contains(PROJECTION_RESTORE_KEY) || generatedEnvelope.contains(PROJECTION_RESTORE_REMOVED_KEY)) {
+                || generatedEnvelope.contains(PROJECTION_RESTORE_KEY) || generatedEnvelope.contains(PROJECTION_RESTORE_REMOVED_KEY)) {
             return true;
         }
         final CustomData customData = runtime.get(DataComponents.CUSTOM_DATA);
@@ -625,20 +626,12 @@ public final class ContentSystemProjectionService {
             for (final Map.Entry<String, Tag> entry : values.entrySet()) {
                 final Identifier key = parseIdentifier(entry.getKey());
                 final DataComponentType<?> type = BuiltInRegistries.DATA_COMPONENT_TYPE.getValue(key);
-                if (!(type instanceof ContentSystemDataComponentType<?> custom) || custom.persistenceCodec() == null) {
-                    throw new RecoveryFailure(entry.getKey(), "unknown-component", new IllegalArgumentException("Unknown persistent custom component " + key));
+                if (!(type instanceof CustomDataComponentType<?> custom) || custom.persistenceCodec() == null) {
+                    throw new IllegalArgumentException("Unknown persistent custom component " + key);
                 }
-                final Object value;
-                try {
-                    value = custom.valued() ? decode(custom.persistenceCodec(), entry.getValue()) : Unit.INSTANCE;
-                } catch (final Throwable failure) {
-                    if (isFatal(failure)) {
-                        throw (Error) failure;
-                    }
-                    throw new RecoveryFailure(entry.getKey(), "codec", failure);
-                }
+                final Object value = custom.valued() ? decode(custom.persistenceCodec(), entry.getValue()) : Unit.INSTANCE;
                 if (components.containsKey(type)) {
-                    throw new RecoveryFailure(entry.getKey(), "duplicate", new IllegalArgumentException("Duplicate component patch entry"));
+                    throw new IllegalArgumentException("Duplicate component patch entry");
                 }
                 components.put(type, Optional.of(value));
             }
@@ -650,7 +643,7 @@ public final class ContentSystemProjectionService {
                 final String componentKey = values.getString(index).orElseThrow();
                 final DataComponentType<?> type = resolvePersistentCustomType(componentKey);
                 if (components.containsKey(type)) {
-                    throw new RecoveryFailure(componentKey, "duplicate", new IllegalArgumentException("Duplicate component patch entry"));
+                    throw new IllegalArgumentException("Duplicate component patch entry");
                 }
                 components.put(type, Optional.empty());
                 removed.add(type);
@@ -679,23 +672,23 @@ public final class ContentSystemProjectionService {
     private static Item resolveCustomItem(final String key) {
         final Item item = BuiltInRegistries.ITEM.getValue(parseIdentifier(key));
         if (!(item instanceof ContentSystemItem)) {
-            throw new RecoveryFailure(key, "unknown-item", new IllegalArgumentException("Recovery envelope does not identify a Content System item"));
+            throw new IllegalArgumentException("Recovery envelope does not identify a Content System item");
         }
         return item;
     }
 
     private static DataComponentType<?> resolvePersistentCustomType(final String key) {
         final DataComponentType<?> type = BuiltInRegistries.DATA_COMPONENT_TYPE.getValue(parseIdentifier(key));
-        if (!(type instanceof ContentSystemDataComponentType<?> custom) || custom.persistenceCodec() == null) {
-            throw new RecoveryFailure(key, "unknown-component", new IllegalArgumentException("Unknown persistent custom component " + key));
+        if (!(type instanceof CustomDataComponentType<?> custom) || custom.persistenceCodec() == null) {
+            throw new IllegalArgumentException("Unknown persistent custom component " + key);
         }
         return type;
     }
 
     private static DataComponentType<?> resolveVanillaType(final String key) {
         final DataComponentType<?> type = BuiltInRegistries.DATA_COMPONENT_TYPE.getValue(parseIdentifier(key));
-        if (type == null || type instanceof ContentSystemDataComponentType<?>) {
-            throw new RecoveryFailure(key, "invalid-restore", new IllegalArgumentException("Invalid projection restore component " + key));
+        if (type == null || type instanceof CustomDataComponentType<?>) {
+            throw new IllegalArgumentException("Invalid projection restore component " + key);
         }
         return type;
     }
@@ -749,34 +742,11 @@ public final class ContentSystemProjectionService {
         return result.result().orElseThrow(() -> new IllegalArgumentException("Custom component codec rejected a value: " + result.error().map(DataResult.Error::message).orElse("unknown error")));
     }
 
-    private static @Nullable String parsedKey(final CompoundTag envelope) {
-        return envelope.getStringOr("item", null);
-    }
-
-    private static String failureCategory(final Throwable failure) {
-        return failure instanceof IllegalArgumentException ? "malformed-or-unknown" : "codec";
-    }
-
-    private static final class RecoveryFailure extends RuntimeException {
-        private final String key;
-        private final String category;
-
-        private RecoveryFailure(final String key, final String category, final Throwable cause) {
-            super(cause);
-            this.key = key;
-            this.category = category;
-        }
-    }
-
-    private static boolean isFatal(final Throwable failure) {
-        return failure instanceof VirtualMachineError || failure instanceof ThreadDeath || failure instanceof LinkageError;
-    }
-
     private record ParsedEnvelope(
-        @Nullable String itemKey,
-        Map<DataComponentType<?>, Optional<Object>> components,
-        Map<DataComponentType<?>, Tag> restoration,
-        List<DataComponentType<?>> restorationRemoved
+            @Nullable String itemKey,
+            Map<DataComponentType<?>, Optional<Object>> components,
+            Map<DataComponentType<?>, Tag> restoration,
+            List<DataComponentType<?>> restorationRemoved
     ) {
     }
 
@@ -821,7 +791,7 @@ public final class ContentSystemProjectionService {
         @SuppressWarnings({"rawtypes", "unchecked"})
         public <T> @Nullable T getData(final io.papermc.paper.datacomponent.DataComponentType.Valued<T> type) {
             final PaperDataComponentType.ValuedImpl<T, ?> paperType =
-                (PaperDataComponentType.ValuedImpl<T, ?>) type;
+                    (PaperDataComponentType.ValuedImpl<T, ?>) type;
             final Object value = this.source.get(paperType.getHandle());
             return value == null ? null : (T) ((DataComponentAdapter) paperType.getAdapter()).fromVanilla(value);
         }
@@ -835,18 +805,11 @@ public final class ContentSystemProjectionService {
     static final class ProjectionOutputImpl implements ProjectionOutput {
         private final ItemStack projected;
         private final Material vanillaMaterial;
-        private final Map<DataComponentType<?>, Capture> canonicalValues = new IdentityHashMap<>();
         private final Map<DataComponentType<?>, Capture> restorationValues = new IdentityHashMap<>();
-        private @Nullable Transaction activeTransaction;
 
         private ProjectionOutputImpl(final ItemStack projected, final Material vanillaMaterial) {
             this.projected = projected;
             this.vanillaMaterial = vanillaMaterial;
-            for (final DataComponentType<?> type : BuiltInRegistries.DATA_COMPONENT_TYPE) {
-                if (!(type instanceof ContentSystemDataComponentType<?>)) {
-                    this.canonicalValues.put(type, Capture.of(projected, type));
-                }
-            }
         }
 
         @Override
@@ -858,7 +821,7 @@ public final class ContentSystemProjectionService {
         @SuppressWarnings({"rawtypes", "unchecked"})
         public <T> @Nullable T get(final io.papermc.paper.datacomponent.DataComponentType.Valued<T> type) {
             final PaperDataComponentType.ValuedImpl<T, ?> paperType =
-                (PaperDataComponentType.ValuedImpl<T, ?>) type;
+                    (PaperDataComponentType.ValuedImpl<T, ?>) type;
             final Object value = this.projected.get(paperType.getHandle());
             return value == null ? null : (T) ((DataComponentAdapter) paperType.getAdapter()).fromVanilla(value);
         }
@@ -872,7 +835,7 @@ public final class ContentSystemProjectionService {
         @SuppressWarnings({"rawtypes", "unchecked"})
         public <T> void set(final io.papermc.paper.datacomponent.DataComponentType.Valued<T> type, final T value) {
             final PaperDataComponentType.ValuedImpl paperType =
-                (PaperDataComponentType.ValuedImpl) type;
+                    (PaperDataComponentType.ValuedImpl) type;
             final DataComponentType<?> nms = (DataComponentType<?>) paperType.getHandle();
             ensureVanilla(nms);
             this.beforeWrite(nms);
@@ -883,7 +846,7 @@ public final class ContentSystemProjectionService {
         @SuppressWarnings({"rawtypes", "unchecked"})
         public void set(final io.papermc.paper.datacomponent.DataComponentType.NonValued type) {
             final PaperDataComponentType.NonValuedImpl paperType =
-                (PaperDataComponentType.NonValuedImpl) type;
+                    (PaperDataComponentType.NonValuedImpl) type;
             final DataComponentType<?> nms = (DataComponentType<?>) paperType.getHandle();
             ensureVanilla(nms);
             this.beforeWrite(nms);
@@ -899,41 +862,36 @@ public final class ContentSystemProjectionService {
         }
 
         private void ensureVanilla(final DataComponentType<?> type) {
-            if (type instanceof ContentSystemDataComponentType<?>) {
+            if (type instanceof CustomDataComponentType<?>) {
                 throw new IllegalArgumentException("Projection output cannot contain a custom component");
             }
         }
 
         private void beforeWrite(final DataComponentType<?> type) {
             if (!this.restorationValues.containsKey(type)) {
-                this.restorationValues.put(type, this.canonicalValues.getOrDefault(type, Capture.of(this.projected, type)));
-                if (this.activeTransaction != null) {
-                    this.activeTransaction.restorationAdded.add(type);
-                }
+                this.restorationValues.put(type, Capture.of(this.projected, type));
             }
-            if (this.activeTransaction != null) {
-                this.activeTransaction.before.putIfAbsent(type, Capture.of(this.projected, type));
-            }
-        }
-
-        private Transaction beginTransaction() {
-            if (this.activeTransaction != null) {
-                throw new IllegalStateException("Nested projection modifier transaction");
-            }
-            final Transaction transaction = new Transaction(this);
-            this.activeTransaction = transaction;
-            return transaction;
         }
 
         private Map<DataComponentType<?>, Capture> restorationValues() {
             return Map.copyOf(this.restorationValues);
         }
 
-        private static void apply(final ItemStack stack, final DataComponentType<?> type, final Capture capture) {
-            if (capture.present()) {
-                setUnchecked(stack, type, capture.value());
-            } else {
-                stack.remove(type);
+        private void validateRestorationValues() {
+            for (final Map.Entry<DataComponentType<?>, Capture> entry : this.restorationValues.entrySet()) {
+                final DataComponentType<?> type = entry.getKey();
+                final Identifier key = BuiltInRegistries.DATA_COMPONENT_TYPE.getKey(type);
+                if (key == null) {
+                    throw new IllegalArgumentException("Projection restore component is not registered");
+                }
+                final Capture capture = entry.getValue();
+                if (capture.present()) {
+                    final Codec<?> codec = type.codec();
+                    if (codec == null) {
+                        throw new IllegalArgumentException("Cannot persist projection restore for transient component " + key);
+                    }
+                    encode(codec, capture.value());
+                }
             }
         }
 
@@ -944,53 +902,5 @@ public final class ContentSystemProjectionService {
             }
         }
 
-        final class Transaction {
-            private final Map<DataComponentType<?>, Capture> before = new IdentityHashMap<>();
-            private final Set<DataComponentType<?>> restorationAdded = Collections.newSetFromMap(new IdentityHashMap<>());
-            private boolean finished;
-
-            private Transaction(final ProjectionOutputImpl ignored) {
-            }
-
-            private void commit() {
-                final DataResult<ItemStack> validation = ItemStack.validateStrict(ProjectionOutputImpl.this.projected);
-                if (validation.isError()) {
-                    throw new IllegalArgumentException(
-                        "Projection modifier produced an invalid item stack: "
-                            + validation.error().map(DataResult.Error::message).orElse("unknown error")
-                    );
-                }
-                for (final DataComponentType<?> type : this.restorationAdded) {
-                    final Identifier key = BuiltInRegistries.DATA_COMPONENT_TYPE.getKey(type);
-                    if (key == null) {
-                        throw new IllegalArgumentException("Projection restore component is not registered");
-                    }
-                    final Capture capture = ProjectionOutputImpl.this.restorationValues.get(type);
-                    if (capture != null && capture.present()) {
-                        final Codec<?> codec = type.codec();
-                        if (codec == null) {
-                            throw new IllegalArgumentException("Cannot persist projection restore for transient component " + key);
-                        }
-                        encode(codec, capture.value());
-                    }
-                }
-                this.finished = true;
-                ProjectionOutputImpl.this.activeTransaction = null;
-            }
-
-            private void rollback() {
-                if (this.finished) {
-                    return;
-                }
-                for (final Map.Entry<DataComponentType<?>, Capture> entry : this.before.entrySet()) {
-                    apply(ProjectionOutputImpl.this.projected, entry.getKey(), entry.getValue());
-                }
-                for (final DataComponentType<?> type : this.restorationAdded) {
-                    ProjectionOutputImpl.this.restorationValues.remove(type);
-                }
-                this.finished = true;
-                ProjectionOutputImpl.this.activeTransaction = null;
-            }
-        }
     }
 }

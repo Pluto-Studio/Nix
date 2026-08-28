@@ -20,7 +20,7 @@ import org.jspecify.annotations.Nullable;
  * deliberately failing network codec makes an accidental unprojected send
  * fail loudly until the NMS projection layer is installed.</p>
  */
-public final class ContentSystemDataComponentType<T> implements DataComponentType<T> {
+public final class CustomDataComponentType<T> implements DataComponentType<T> {
 
     private static final StreamCodec<RegistryFriendlyByteBuf, Object> NEVER_NETWORK = new StreamCodec<>() {
         @Override
@@ -40,7 +40,7 @@ public final class ContentSystemDataComponentType<T> implements DataComponentTyp
     private final ProjectionModifier defaultProjection;
     private final DataComponentAdapter<?, ?> paperAdapter;
 
-    public ContentSystemDataComponentType(
+    public CustomDataComponentType(
         final ResourceKey<DataComponentType<?>> key,
         final boolean valued,
         final @Nullable Codec<T> codec,

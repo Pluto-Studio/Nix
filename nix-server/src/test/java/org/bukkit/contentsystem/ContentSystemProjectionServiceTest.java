@@ -1,6 +1,6 @@
 package org.bukkit.contentsystem;
 
-import club.plutoproject.nix.contentsystem.ContentSystemDataComponentType;
+import club.plutoproject.nix.contentsystem.CustomDataComponentType;
 import club.plutoproject.nix.contentsystem.ContentSystemItem;
 import club.plutoproject.nix.contentsystem.ContentSystemProjectionService;
 import club.plutoproject.nix.contentsystem.ProjectionModifier;
@@ -92,15 +92,18 @@ class ContentSystemProjectionServiceTest {
     }
 
     @Test
-    void invalidModifierOutputRollsBackOnlyThatModifier() throws Exception {
-        final RegisteredComponent<Integer> first = registerComponent("transaction-first");
-        final RegisteredComponent<Integer> failed = registerComponent("transaction-failed");
-        final RegisteredComponent<Integer> last = registerComponent("transaction-last");
+    void modifierFailureFailsFast() throws Exception {
+        final RegisteredComponent<Integer> first = registerComponent("fail-fast-first");
+        final RegisteredComponent<Integer> failed = registerComponent("fail-fast-failed");
+        final RegisteredComponent<Integer> last = registerComponent("fail-fast-last");
         final ContentSystemItem custom = registerItem(
-            "transaction",
+            "fail-fast",
             List.of(
                 binding(first, (context, value, output) -> output.set(DataComponentTypes.MAX_STACK_SIZE, 2)),
-                binding(failed, (context, value, output) -> output.set(DataComponentTypes.MAX_DAMAGE, 1)),
+                binding(failed, (context, value, output) -> {
+                    output.set(DataComponentTypes.MAX_DAMAGE, 1);
+                    throw new IllegalStateException();
+                }),
                 binding(last, (context, value, output) -> output.set(DataComponentTypes.DAMAGE, 1))
             )
         );
@@ -109,16 +112,14 @@ class ContentSystemProjectionServiceTest {
         runtime.set(failed.type(), 1);
         runtime.set(last.type(), 1);
 
-        final ItemStack projected = new ContentSystemProjectionService().project(runtime, mock(Player.class));
-
-        Assertions.assertEquals(2, projected.get(DataComponents.MAX_STACK_SIZE));
-        Assertions.assertNull(projected.get(DataComponents.MAX_DAMAGE));
-        Assertions.assertEquals(1, projected.get(DataComponents.DAMAGE));
-        Assertions.assertTrue(ItemStack.validateStrict(projected).result().isPresent());
+        Assertions.assertThrows(
+            IllegalStateException.class,
+            () -> new ContentSystemProjectionService().project(runtime, mock(Player.class))
+        );
     }
 
     @Test
-    void transientRestorationFailureRollsBackAndContinues() throws Exception {
+    void transientRestorationFailureFailsFast() throws Exception {
         final RegisteredComponent<Integer> failed = registerComponent("transient-failed");
         final RegisteredComponent<Integer> last = registerComponent("transient-last");
         final ContentSystemItem custom = registerItem(
@@ -136,11 +137,10 @@ class ContentSystemProjectionServiceTest {
         runtime.set(last.type(), 1);
         runtime.set(DataComponents.MAP_POST_PROCESSING, MapPostProcessing.SCALE);
 
-        final ItemStack projected = new ContentSystemProjectionService().project(runtime, mock(Player.class));
-
-        Assertions.assertEquals(MapPostProcessing.SCALE, projected.get(DataComponents.MAP_POST_PROCESSING));
-        Assertions.assertEquals(1, projected.get(DataComponents.DAMAGE));
-        Assertions.assertTrue(ItemStack.validateStrict(projected).result().isPresent());
+        Assertions.assertThrows(
+            IllegalArgumentException.class,
+            () -> new ContentSystemProjectionService().project(runtime, mock(Player.class))
+        );
     }
 
     @Test
@@ -225,7 +225,7 @@ class ContentSystemProjectionServiceTest {
         synchronized (registry) {
             final boolean frozen = setFrozen(registry, false);
             try {
-                final ContentSystemDataComponentType<Integer> type = new ContentSystemDataComponentType<>(key, true, Codec.INT, null);
+                final CustomDataComponentType<Integer> type = new CustomDataComponentType<>(key, true, Codec.INT, null);
                 final Holder.Reference<DataComponentType<?>> holder = registry.register(key, type, RegistrationInfo.BUILT_IN);
                 bindValue(holder, type);
                 return new RegisteredComponent<>(type);
@@ -331,6 +331,6 @@ class ContentSystemProjectionServiceTest {
         }
     }
 
-    private record RegisteredComponent<T>(ContentSystemDataComponentType<T> type) {
+    private record RegisteredComponent<T>(CustomDataComponentType<T> type) {
     }
 }

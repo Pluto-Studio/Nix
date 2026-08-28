@@ -33,7 +33,7 @@ public final class DataComponentTypeRegistryEntryImpl {
             final DataComponentType<?> internal
         ) {
             this.internal = internal;
-            if (internal instanceof ContentSystemDataComponentType<?> custom) {
+            if (internal instanceof CustomDataComponentType<?> custom) {
                 this.kindSelected = true;
                 this.valued = custom.valued();
                 if (custom.valued()) {
@@ -116,14 +116,14 @@ public final class DataComponentTypeRegistryEntryImpl {
                 throw new IllegalArgumentException("Reserved Content System namespace: " + key.identifier().getNamespace());
             }
             if (this.valued) {
-                return new ContentSystemDataComponentType<>(
+                return new CustomDataComponentType<>(
                     key,
                     true,
                     (Codec<Object>) this.valuedPersistenceCodec,
                     this.valuedProjection
                 );
             }
-            return new ContentSystemDataComponentType<>(
+            return new CustomDataComponentType<>(
                 key,
                 false,
                 this.nonValuedPersistent ? (Codec<Unit>) Unit.CODEC : null,
