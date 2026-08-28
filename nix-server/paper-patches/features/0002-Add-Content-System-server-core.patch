@@ -3,13 +3,13 @@ From: nostalfinals <yuu8583@proton.me>
 Date: Fri, 28 Aug 2026 01:23:38 +0800
 Subject: [PATCH] Add Content System server core
 
-Add add-only ITEM and DATA_COMPONENT_TYPE registry builders with scoped registration keys, immutable ContentSystemItem definitions, custom Paper adapters, and metadata-backed persistence. Custom component values remain transient to vanilla codec and network paths while the Nix projection and recovery service carries persistent state in custom_data envelopes.
+Add add-only ITEM and DATA_COMPONENT_TYPE registry builders with scoped registration keys, immutable custom item definitions, custom Paper adapters, and metadata-backed persistence. Custom component values remain transient to vanilla codec and network paths while the Nix projection and recovery service carries persistent state in custom_data envelopes.
 
-Expose actual ItemType identity and configured Material compatibility through CraftBukkit, including generic custom ItemMeta handling, type-preserving conversion, copying, and similarity. Wire the server-owned ContentSystem service and projection-aware remote slot state.
+Expose actual ItemType identity and configured Material compatibility through CraftBukkit, including generic custom ItemMeta handling, type-preserving conversion, copying, and similarity. Wire the server-owned Content System service and projection-aware remote slot state.
 
-Dispatch the currently available Item virtual hooks through typed Bukkit contexts with default-operation parity, isolated callback fallback, validation, and rate-limited diagnostics. Enriched overload methods are provided for the later NMS call-site patch without changing generated Minecraft sources here.
+Dispatch the currently available Item virtual hooks through typed Bukkit contexts with default-operation parity and result validation. Enriched overload methods are provided for the later NMS call-site patch without changing generated Minecraft sources here. Callback and modifier failures remain fail-fast by contract.
 
-Projection does a small component reconciliation and only allocates modifier transaction state for stacks with Content System projection work. Persistent component codecs and envelope copies add bounded per-serialization allocations; runtime stacks remain authoritative and custom component values are not deep-copied. The trade-off is a server-side bridge in CraftBukkit and a narrow dependency on the Nix API types, while vanilla items retain their existing behavior.
+Projection does a small component reconciliation for stacks with Content System projection work. Persistent component codecs and envelope copies add bounded per-serialization allocations; runtime stacks remain authoritative and custom component values are not deep-copied. The trade-off is a server-side bridge in CraftBukkit and a narrow dependency on the Nix API types, while vanilla items retain their existing behavior.
 
 diff --git a/src/main/java/io/papermc/paper/datacomponent/DataComponentAdapters.java b/src/main/java/io/papermc/paper/datacomponent/DataComponentAdapters.java
 index a775db74a4479687f0c93115b6dc62a3a44e0190..92739e639f4072d46bcb6720d4ba7c24a01483c3 100644
@@ -30,15 +30,29 @@ index a775db74a4479687f0c93115b6dc62a3a44e0190..92739e639f4072d46bcb6720d4ba7c24
 +    // Nix end - provide identity adapters for Content System component values
  }
 diff --git a/src/main/java/io/papermc/paper/datacomponent/PaperDataComponentType.java b/src/main/java/io/papermc/paper/datacomponent/PaperDataComponentType.java
-index 8b123740e8881ba69af4e772c5d9be82c4d9c813..c38a24483e0c3ecd26a00aab6fb55a47d3d744a8 100644
+index 8b123740e8881ba69af4e772c5d9be82c4d9c813..3a6e8cb30b2f66bb33a088fc16e577fcd8b51696 100644
 --- a/src/main/java/io/papermc/paper/datacomponent/PaperDataComponentType.java
 +++ b/src/main/java/io/papermc/paper/datacomponent/PaperDataComponentType.java
+@@ -1,12 +1,12 @@
+ package io.papermc.paper.datacomponent;
+ 
++import club.plutoproject.nix.contentsystem.registry.CustomDataComponentType;
+ import io.papermc.paper.registry.HolderableBase;
+ import java.util.Collections;
+ import java.util.HashSet;
+ import java.util.Set;
+ import net.minecraft.core.Holder;
+ import net.minecraft.core.component.DataComponentGetter;
+-import net.minecraft.core.component.DataComponentMap;
+ import net.minecraft.core.registries.Registries;
+ import org.bukkit.craftbukkit.CraftRegistry;
+ import org.jspecify.annotations.Nullable;
 @@ -51,6 +51,11 @@ public abstract class PaperDataComponentType<T, NMS> extends HolderableBase<net.
  
      @Override
      public boolean isPersistent() {
 +        // Nix start - persistence belongs to Content System metadata, not the vanilla codec
-+        if (this.getHandle() instanceof club.plutoproject.nix.contentsystem.ContentSystemDataComponentType<?> custom) {
++        if (this.getHandle() instanceof CustomDataComponentType<?> custom) {
 +            return custom.persistenceCodec() != null;
 +        }
 +        // Nix end - persistence belongs to Content System metadata, not the vanilla codec
@@ -52,7 +66,7 @@ index 8b123740e8881ba69af4e772c5d9be82c4d9c813..c38a24483e0c3ecd26a00aab6fb55a47
 -        final DataComponentAdapter<NMS, ?> adapter = (DataComponentAdapter<NMS, ?>) DataComponentAdapters.ADAPTERS.get(holder.unwrapKey().orElseThrow());
 +        // Nix start - resolve Content System component adapters from the registered value
 +        DataComponentAdapter<NMS, ?> adapter = (DataComponentAdapter<NMS, ?>) DataComponentAdapters.ADAPTERS.get(holder.unwrapKey().orElseThrow());
-+        if (adapter == null && holder.value() instanceof club.plutoproject.nix.contentsystem.ContentSystemDataComponentType<?> custom) {
++        if (adapter == null && holder.value() instanceof CustomDataComponentType<?> custom) {
 +            adapter = (DataComponentAdapter<NMS, ?>) custom.paperAdapter();
 +        }
 +        // Nix end - resolve Content System component adapters from the registered value
@@ -60,7 +74,7 @@ index 8b123740e8881ba69af4e772c5d9be82c4d9c813..c38a24483e0c3ecd26a00aab6fb55a47
              throw new IllegalArgumentException("No adapter found for " + holder);
          }
 diff --git a/src/main/java/io/papermc/paper/registry/PaperRegistries.java b/src/main/java/io/papermc/paper/registry/PaperRegistries.java
-index 17cf4ecbd97bf655a61a476119b7a1a00996aafd..a8420cfa6b7d9b4663a8fe44fffdab8266e9c66e 100644
+index 17cf4ecbd97bf655a61a476119b7a1a00996aafd..bc849fad0021e6260594c82de03e43ce7dba8628 100644
 --- a/src/main/java/io/papermc/paper/registry/PaperRegistries.java
 +++ b/src/main/java/io/papermc/paper/registry/PaperRegistries.java
 @@ -118,7 +118,9 @@ public final class PaperRegistries {
@@ -69,7 +83,7 @@ index 17cf4ecbd97bf655a61a476119b7a1a00996aafd..a8420cfa6b7d9b4663a8fe44fffdab82
              start(Registries.BLOCK, RegistryKey.BLOCK).craft(BlockType.class, CraftBlockType::new).build(),
 -            start(Registries.ITEM, RegistryKey.ITEM).craft(ItemType.class, CraftItemType::new).build(),
 +            // Nix start - add Content System items
-+            start(Registries.ITEM, RegistryKey.ITEM).craft(ItemType.class, CraftItemType::new).addable(club.plutoproject.nix.contentsystem.ItemTypeRegistryEntryImpl.PaperBuilder::new),
++            start(Registries.ITEM, RegistryKey.ITEM).craft(ItemType.class, CraftItemType::new).addable(club.plutoproject.nix.contentsystem.registry.CustomItemRegistryEntry.PaperBuilder::new),
 +            // Nix end - add Content System items
              start(Registries.VILLAGER_PROFESSION, RegistryKey.VILLAGER_PROFESSION).craft(Villager.Profession.class, CraftVillager.CraftProfession::new).build(),
              start(Registries.VILLAGER_TYPE, RegistryKey.VILLAGER_TYPE).craft(Villager.Type.class, CraftVillager.CraftType::new).build(),
@@ -80,13 +94,13 @@ index 17cf4ecbd97bf655a61a476119b7a1a00996aafd..a8420cfa6b7d9b4663a8fe44fffdab82
              start(Registries.SOUND_EVENT, RegistryKey.SOUND_EVENT).craft(Sound.class, CraftSound::new, true).create(PaperSoundEventRegistryEntry.PaperBuilder::new, RegistryEntryMeta.RegistryModificationApiSupport.NONE),
 -            start(Registries.DATA_COMPONENT_TYPE, RegistryKey.DATA_COMPONENT_TYPE).craft(DataComponentTypes.class, PaperDataComponentType::of).build(),
 +            // Nix start - add Content System data components
-+            start(Registries.DATA_COMPONENT_TYPE, RegistryKey.DATA_COMPONENT_TYPE).craft(DataComponentTypes.class, PaperDataComponentType::of).addable(club.plutoproject.nix.contentsystem.DataComponentTypeRegistryEntryImpl.PaperBuilder::new),
++            start(Registries.DATA_COMPONENT_TYPE, RegistryKey.DATA_COMPONENT_TYPE).craft(DataComponentTypes.class, PaperDataComponentType::of).addable(club.plutoproject.nix.contentsystem.registry.CustomDataComponentRegistryEntry.PaperBuilder::new),
 +            // Nix end - add Content System data components
              start(Registries.GAME_RULE, RegistryKey.GAME_RULE).craft(GameRule.class, CraftGameRule::new).build(),
              start(Registries.POINT_OF_INTEREST_TYPE, RegistryKey.POINT_OF_INTEREST_TYPE).craft(PoiTypes.class, PaperPoiType::new).build(),
  
 diff --git a/src/main/java/io/papermc/paper/registry/WritableCraftRegistry.java b/src/main/java/io/papermc/paper/registry/WritableCraftRegistry.java
-index 9e8672c705eb27c9b7d190129129454fd83cf7d5..09274da553940db0355fe5c18fb58215ee18d348 100644
+index 9e8672c705eb27c9b7d190129129454fd83cf7d5..a82195f17a4f08010aaaacaa8bd7ffc4b67831c2 100644
 --- a/src/main/java/io/papermc/paper/registry/WritableCraftRegistry.java
 +++ b/src/main/java/io/papermc/paper/registry/WritableCraftRegistry.java
 @@ -30,7 +30,13 @@ public class WritableCraftRegistry<M, T extends Keyed, B extends PaperRegistryBu
@@ -98,7 +112,7 @@ index 9e8672c705eb27c9b7d190129129454fd83cf7d5..09274da553940db0355fe5c18fb58215
 +        if (this.registry.get(resourceKey).isPresent()) {
 +            throw new IllegalStateException("Adding duplicate key '" + resourceKey + "' to registry");
 +        }
-+        try (final club.plutoproject.nix.contentsystem.ContentSystemRegistrationContext.Scope ignored = club.plutoproject.nix.contentsystem.ContentSystemRegistrationContext.enter(resourceKey)) {
++        try (final club.plutoproject.nix.contentsystem.registry.RegistrationKeyScope.Scope ignored = club.plutoproject.nix.contentsystem.registry.RegistrationKeyScope.enter(resourceKey)) {
 +        // Nix end - scope custom builder keys and reject duplicates before builders have side effects
          final PaperRegistryBuilderFactory<M, T, B> builderFactory = new PaperRegistryBuilderFactory<>(this.registry.key(), conversions, this.meta.builderFiller(), this.registry::getValueForCopying);
          value.accept(builderFactory);
@@ -114,7 +128,7 @@ index 9e8672c705eb27c9b7d190129129454fd83cf7d5..09274da553940db0355fe5c18fb58215
  
      public WritableRegistry<T, B> createApiWritableRegistry(final Conversions conversions) {
 diff --git a/src/main/java/io/papermc/paper/util/MCUtil.java b/src/main/java/io/papermc/paper/util/MCUtil.java
-index f659aba1587d70b8d4011e66f40f480ff4deeeb4..5fb406f9ec04a634523d05a9bebe3848279d8c44 100644
+index f659aba1587d70b8d4011e66f40f480ff4deeeb4..fd4d3bd4df4485b5f7e18429646e7c21e0a390d3 100644
 --- a/src/main/java/io/papermc/paper/util/MCUtil.java
 +++ b/src/main/java/io/papermc/paper/util/MCUtil.java
 @@ -290,9 +290,11 @@ public final class MCUtil {
@@ -123,7 +137,7 @@ index f659aba1587d70b8d4011e66f40f480ff4deeeb4..5fb406f9ec04a634523d05a9bebe3848
          }
 -        return CraftItemStack.asCraftMirror(ItemStack.CODEC.parse(
 +        // Nix start - recover Content System metadata after vanilla decoding
-+        return CraftItemStack.asCraftMirror(club.plutoproject.nix.contentsystem.ContentSystemServices.current().recover(ItemStack.CODEC.parse(
++        return CraftItemStack.asCraftMirror(club.plutoproject.nix.contentsystem.ContentRuntime.current().recover(ItemStack.CODEC.parse(
              CraftRegistry.getMinecraftRegistry().createSerializationContext(NbtOps.INSTANCE), tag
 -        ).getOrThrow());
 +        ).getOrThrow()));
@@ -132,7 +146,7 @@ index f659aba1587d70b8d4011e66f40f480ff4deeeb4..5fb406f9ec04a634523d05a9bebe3848
  
      public static byte[] serializeTagToBytes(final CompoundTag tag) {
 diff --git a/src/main/java/org/bukkit/craftbukkit/CraftServer.java b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
-index 716c3b17dc07eb2417dfb0084fe75dbd270f031a..e8dbb42ae2a9f4b8726938f5c11f5831918e41c3 100644
+index 716c3b17dc07eb2417dfb0084fe75dbd270f031a..c6925aec05f4ca1c471d2ad4c89cb4b0009f3788 100644
 --- a/src/main/java/org/bukkit/craftbukkit/CraftServer.java
 +++ b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
 @@ -304,6 +304,9 @@ public final class CraftServer implements Server {
@@ -151,7 +165,7 @@ index 716c3b17dc07eb2417dfb0084fe75dbd270f031a..e8dbb42ae2a9f4b8726938f5c11f5831
          CraftRegistry.setMinecraftRegistry(console.registryAccess());
 +        // Nix start - initialize Content System after the server registry access exists
 +        this.contentSystem = new club.plutoproject.nix.contentsystem.ContentSystemImpl();
-+        club.plutoproject.nix.contentsystem.ContentSystemServices.install(this.contentSystem);
++        club.plutoproject.nix.contentsystem.ContentRuntime.install(this.contentSystem);
 +        // Nix end - initialize Content System after the server registry access exists
  
          if (!Main.useConsole) {
@@ -171,7 +185,7 @@ index 716c3b17dc07eb2417dfb0084fe75dbd270f031a..e8dbb42ae2a9f4b8726938f5c11f5831
      public ResourcePack getServerResourcePack() {
          return this.getServer().getServerResourcePack().map(CraftResourcePack::new).orElse(null);
 diff --git a/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemFactory.java b/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemFactory.java
-index 70e21e1fc337c6ea40e64020fa1832d1630cae97..89202173bb223b0506ade0e37e665f7190a250d2 100644
+index 70e21e1fc337c6ea40e64020fa1832d1630cae97..b30fbd252f68331d6ff0dc6e3c7f842fd33ae146 100644
 --- a/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemFactory.java
 +++ b/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemFactory.java
 @@ -62,6 +62,12 @@ public final class CraftItemFactory implements ItemFactory {
@@ -180,7 +194,7 @@ index 70e21e1fc337c6ea40e64020fa1832d1630cae97..89202173bb223b0506ade0e37e665f71
          }
 +        // Nix start - specialized meta is never applicable to a custom Item Type
 +        if (itemstack.getItemType() instanceof CraftItemType<?> type
-+            && type.getHandle() instanceof club.plutoproject.nix.contentsystem.ContentSystemItem) {
++            && type.getHandle() instanceof club.plutoproject.nix.contentsystem.item.CustomItem) {
 +            return meta instanceof CraftMetaItem && meta.getClass() == CraftMetaItem.class;
 +        }
 +        // Nix end - specialized meta is never applicable to a custom Item Type
@@ -193,7 +207,7 @@ index 70e21e1fc337c6ea40e64020fa1832d1630cae97..89202173bb223b0506ade0e37e665f71
          Preconditions.checkArgument(stack != null, "ItemStack stack cannot be null");
 +        // Nix start - retain generic ItemMeta for Content System items
 +        if (stack.getItemType() instanceof CraftItemType<?> type
-+            && type.getHandle() instanceof club.plutoproject.nix.contentsystem.ContentSystemItem) {
++            && type.getHandle() instanceof club.plutoproject.nix.contentsystem.item.CustomItem) {
 +            Preconditions.checkArgument(meta instanceof CraftMetaItem, "Meta of %s not created by %s", (meta != null ? meta.getClass().toString() : "null"), CraftItemFactory.class.getName());
 +            return meta.getClass() == CraftMetaItem.class ? meta : null;
 +        }
@@ -207,13 +221,13 @@ index 70e21e1fc337c6ea40e64020fa1832d1630cae97..89202173bb223b0506ade0e37e665f71
              }
 -            return CraftItemStack.asCraftMirror(in.createItemStack(1));
 +            // Nix start - recover Content System metadata from parsed item input
-+            return CraftItemStack.asCraftMirror(club.plutoproject.nix.contentsystem.ContentSystemServices.current().recover(in.createItemStack(1)));
++            return CraftItemStack.asCraftMirror(club.plutoproject.nix.contentsystem.ContentRuntime.current().recover(in.createItemStack(1)));
 +            // Nix end - recover Content System metadata from parsed item input
          } catch (CommandSyntaxException ex) {
              throw new IllegalArgumentException("Could not parse ItemStack: " + input, ex);
          }
 diff --git a/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemMetas.java b/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemMetas.java
-index 3aac6831f5f3b7c5d6ca13110f88b2ad5189ced7..4f67cc7bcefbe0c9354a3f53568b8c425dbec02a 100644
+index 3aac6831f5f3b7c5d6ca13110f88b2ad5189ced7..64d0f471c3c754eb5b09dc493cddbb3ecc973666 100644
 --- a/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemMetas.java
 +++ b/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemMetas.java
 @@ -163,6 +163,11 @@ public final class CraftItemMetas {
@@ -221,7 +235,7 @@ index 3aac6831f5f3b7c5d6ca13110f88b2ad5189ced7..4f67cc7bcefbe0c9354a3f53568b8c42
              return CraftItemMetas.asType(CraftItemMetas.EMPTY_META_DATA);
          }
 +        // Nix start - custom item types are never specialized by Material
-+        if (itemHandle instanceof club.plutoproject.nix.contentsystem.ContentSystemItem) {
++        if (itemHandle instanceof club.plutoproject.nix.contentsystem.item.CustomItem) {
 +            return CraftItemMetas.asType(CraftItemMetas.ITEM_META_DATA);
 +        }
 +        // Nix end - custom item types are never specialized by Material
@@ -229,7 +243,7 @@ index 3aac6831f5f3b7c5d6ca13110f88b2ad5189ced7..4f67cc7bcefbe0c9354a3f53568b8c42
              return CraftItemMetas.asType(CraftItemMetas.SIGNED_BOOK_META_DATA);
          }
 diff --git a/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemStack.java b/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemStack.java
-index 3eea7b5e12a440162ca07113a59cd5ccacf0dd2d..97e14368264cdc0991c8205b0ca83313578ab495 100644
+index 3eea7b5e12a440162ca07113a59cd5ccacf0dd2d..439f13938096d7385083404df454be59993f73a7 100644
 --- a/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemStack.java
 +++ b/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemStack.java
 @@ -196,6 +196,11 @@ public final class CraftItemStack extends ItemStack {
@@ -237,7 +251,7 @@ index 3eea7b5e12a440162ca07113a59cd5ccacf0dd2d..97e14368264cdc0991c8205b0ca83313
  
      public static CraftItemStack asNewCraftStack(Item item, int amount) {
 +        // Nix start - retain custom Item Type identity when creating a Craft mirror
-+        if (item instanceof club.plutoproject.nix.contentsystem.ContentSystemItem) {
++        if (item instanceof club.plutoproject.nix.contentsystem.item.CustomItem) {
 +            return CraftItemStack.asCraftMirror(new net.minecraft.world.item.ItemStack(item, amount));
 +        }
 +        // Nix end - retain custom Item Type identity when creating a Craft mirror
@@ -296,8 +310,8 @@ index 3eea7b5e12a440162ca07113a59cd5ccacf0dd2d..97e14368264cdc0991c8205b0ca83313
 +            final Material oldType = CraftMagicNumbers.getMaterial(this.handle.getItem());
 +            this.handle.setItem(target);
 +            if (this.hasItemMeta()
-+                && !(this.handle.getItem() instanceof club.plutoproject.nix.contentsystem.ContentSystemItem)
-+                && !(target instanceof club.plutoproject.nix.contentsystem.ContentSystemItem)) {
++                && !(this.handle.getItem() instanceof club.plutoproject.nix.contentsystem.item.CustomItem)
++                && !(target instanceof club.plutoproject.nix.contentsystem.item.CustomItem)) {
                  // This will create the appropriate item meta, which will contain all the data we intend to keep
                  this.adjustTagForItemMeta(oldType); // Paper
              }
@@ -316,7 +330,7 @@ index 3eea7b5e12a440162ca07113a59cd5ccacf0dd2d..97e14368264cdc0991c8205b0ca83313
              (CompoundTag) net.minecraft.world.item.ItemStack.CODEC.encodeStart(
                  CraftRegistry.getMinecraftRegistry().createSerializationContext(NbtOps.INSTANCE),
 -                this.handle
-+                club.plutoproject.nix.contentsystem.ContentSystemServices.current().persistentForm(this.handle)
++                club.plutoproject.nix.contentsystem.ContentRuntime.current().persistentForm(this.handle)
              ).getOrThrow()
          );
 +        // Nix end - write the vanilla-loadable Persistent Form instead of a custom top-level stack
@@ -331,7 +345,7 @@ index 3eea7b5e12a440162ca07113a59cd5ccacf0dd2d..97e14368264cdc0991c8205b0ca83313
          final CompoundTag tag = (CompoundTag) net.minecraft.world.item.ItemStack.CODEC.encodeStart(
              CraftRegistry.getMinecraftRegistry().createSerializationContext(NbtOps.INSTANCE),
 -            CraftItemStack.asNMSCopy(this)
-+            club.plutoproject.nix.contentsystem.ContentSystemServices.current().persistentForm(CraftItemStack.asNMSCopy(this))
++            club.plutoproject.nix.contentsystem.ContentRuntime.current().persistentForm(CraftItemStack.asNMSCopy(this))
          ).getOrThrow();
 +        // Nix end - serialize the vanilla-loadable Persistent Form
          NbtUtils.addCurrentDataVersion(tag);
@@ -342,7 +356,7 @@ index 3eea7b5e12a440162ca07113a59cd5ccacf0dd2d..97e14368264cdc0991c8205b0ca83313
      public static ItemMeta getItemMeta(net.minecraft.world.item.ItemStack item, ItemType metaForType, final Set<DataComponentType<?>> extraHandledComponents) {
          // Paper end - handled tags on type change
 +        // Nix start - custom types always expose generic ItemMeta, even without a patch
-+        if (item != null && item.getItem() instanceof club.plutoproject.nix.contentsystem.ContentSystemItem) {
++        if (item != null && item.getItem() instanceof club.plutoproject.nix.contentsystem.item.CustomItem) {
 +            return ((CraftItemType<?>) CraftItemType.minecraftToBukkitNew(item.getItem())).getItemMeta(item, extraHandledComponents);
 +        }
 +        // Nix end - custom types always expose generic ItemMeta, even without a patch
@@ -354,7 +368,7 @@ index 3eea7b5e12a440162ca07113a59cd5ccacf0dd2d..97e14368264cdc0991c8205b0ca83313
              return false;
          }
 +        // Nix start - Content System items accept only the generic component-backed meta
-+        if (item.getItem() instanceof club.plutoproject.nix.contentsystem.ContentSystemItem) {
++        if (item.getItem() instanceof club.plutoproject.nix.contentsystem.item.CustomItem) {
 +            if (CraftItemFactory.instance().equals(itemMeta, null)) {
 +                item.restorePatch(DataComponentPatch.EMPTY);
 +                return true;
@@ -418,7 +432,7 @@ index 3eea7b5e12a440162ca07113a59cd5ccacf0dd2d..97e14368264cdc0991c8205b0ca83313
  
      @Override
 diff --git a/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemType.java b/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemType.java
-index b1f7fbf5f534bf30a3fd49d4f62a7874395f995b..5c6b9e224a3820f7357e876036e55f7ae45b0350 100644
+index b1f7fbf5f534bf30a3fd49d4f62a7874395f995b..04ffc2f2f673b1c00784cef6cd40817bfd90baae 100644
 --- a/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemType.java
 +++ b/src/main/java/org/bukkit/craftbukkit/inventory/CraftItemType.java
 @@ -44,7 +44,11 @@ public class CraftItemType<M extends ItemMeta> extends HolderableBase<Item> impl
@@ -427,7 +441,7 @@ index b1f7fbf5f534bf30a3fd49d4f62a7874395f995b..5c6b9e224a3820f7357e876036e55f7a
      public static Material minecraftToBukkit(Item item) {
 -        return CraftMagicNumbers.getMaterial(item);
 +        // Nix start - expose a custom item's configured Material compatibility view
-+        return item instanceof club.plutoproject.nix.contentsystem.ContentSystemItem custom
++        return item instanceof club.plutoproject.nix.contentsystem.item.CustomItem custom
 +            ? custom.vanillaMaterial()
 +            : CraftMagicNumbers.getMaterial(item);
 +        // Nix end - expose a custom item's configured Material compatibility view
@@ -439,7 +453,7 @@ index b1f7fbf5f534bf30a3fd49d4f62a7874395f995b..5c6b9e224a3820f7357e876036e55f7a
              throw new UnsupportedOperationException("Air does not have ItemMeta");
          }
 +        // Nix start - custom items always use the generic ItemMeta contract
-+        if (this.getHandle() instanceof club.plutoproject.nix.contentsystem.ContentSystemItem) {
++        if (this.getHandle() instanceof club.plutoproject.nix.contentsystem.item.CustomItem) {
 +            @SuppressWarnings("unchecked") final Class<M> generic = (Class<M>) ItemMeta.class;
 +            return generic;
 +        }
@@ -452,7 +466,7 @@ index b1f7fbf5f534bf30a3fd49d4f62a7874395f995b..5c6b9e224a3820f7357e876036e55f7a
      @Override
      public @Nullable Material asMaterial() {
 +        // Nix start - custom item types retain their configured Material mapping
-+        if (this.getHandle() instanceof club.plutoproject.nix.contentsystem.ContentSystemItem custom) {
++        if (this.getHandle() instanceof club.plutoproject.nix.contentsystem.item.CustomItem custom) {
 +            return custom.vanillaMaterial();
 +        }
 +        // Nix end - custom item types retain their configured Material mapping
@@ -460,7 +474,7 @@ index b1f7fbf5f534bf30a3fd49d4f62a7874395f995b..5c6b9e224a3820f7357e876036e55f7a
      }
  
 diff --git a/src/main/java/org/bukkit/craftbukkit/legacy/MaterialRerouting.java b/src/main/java/org/bukkit/craftbukkit/legacy/MaterialRerouting.java
-index a76e89c12afdf68aadc2742136d008a3f1b2e9aa..d10c080289918227a64b9fad5df3977df19f8355 100644
+index a76e89c12afdf68aadc2742136d008a3f1b2e9aa..931d75051b0559aa8f901fc3671ecf9245f0335f 100644
 --- a/src/main/java/org/bukkit/craftbukkit/legacy/MaterialRerouting.java
 +++ b/src/main/java/org/bukkit/craftbukkit/legacy/MaterialRerouting.java
 @@ -671,6 +671,22 @@ public class MaterialRerouting {
@@ -469,15 +483,15 @@ index a76e89c12afdf68aadc2742136d008a3f1b2e9aa..d10c080289918227a64b9fad5df3977d
      }
 +
 +    // Nix start - reroute Content System Material compatibility methods
-+    public static club.plutoproject.nix.contentsystem.ItemTypeRegistryEntry.Builder vanillaMaterial(
-+        final club.plutoproject.nix.contentsystem.ItemTypeRegistryEntry.Builder builder,
++    public static club.plutoproject.nix.contentsystem.registry.ItemTypeRegistryEntry.Builder vanillaMaterial(
++        final club.plutoproject.nix.contentsystem.registry.ItemTypeRegistryEntry.Builder builder,
 +        final Material material
 +    ) {
 +        return builder.vanillaMaterial(MaterialRerouting.transformToItemType(material));
 +    }
 +
 +    public static Material vanillaMaterial(
-+        final club.plutoproject.nix.contentsystem.ProjectionOutput output,
++        final club.plutoproject.nix.contentsystem.projection.ProjectionOutput output,
 +        @InjectPluginVersion ApiVersion version
 +    ) {
 +        return MaterialRerouting.transformFromItemType(output.vanillaMaterial(), version);
@@ -487,7 +501,7 @@ index a76e89c12afdf68aadc2742136d008a3f1b2e9aa..d10c080289918227a64b9fad5df3977d
  
      // Paper start - methods added post 1.13, no-op
 diff --git a/src/main/java/org/bukkit/craftbukkit/util/CraftMagicNumbers.java b/src/main/java/org/bukkit/craftbukkit/util/CraftMagicNumbers.java
-index 80317dc41f85b91d7219f370d6f51e79496b09c4..3bbcba499e57772dceb7d04d5bbf717627021503 100644
+index 80317dc41f85b91d7219f370d6f51e79496b09c4..81ec32d840e4edce12650069e1a7cf5022b17990 100644
 --- a/src/main/java/org/bukkit/craftbukkit/util/CraftMagicNumbers.java
 +++ b/src/main/java/org/bukkit/craftbukkit/util/CraftMagicNumbers.java
 @@ -170,6 +170,11 @@ public final class CraftMagicNumbers implements UnsafeValues {
@@ -495,7 +509,7 @@ index 80317dc41f85b91d7219f370d6f51e79496b09c4..3bbcba499e57772dceb7d04d5bbf7176
  
      public static Material getMaterial(Item item) {
 +        // Nix start - preserve the configured Material compatibility for custom items
-+        if (item instanceof club.plutoproject.nix.contentsystem.ContentSystemItem custom) {
++        if (item instanceof club.plutoproject.nix.contentsystem.item.CustomItem custom) {
 +            return custom.vanillaMaterial();
 +        }
 +        // Nix end - preserve the configured Material compatibility for custom items
@@ -510,7 +524,7 @@ index 80317dc41f85b91d7219f370d6f51e79496b09c4..3bbcba499e57772dceb7d04d5bbf7176
 +            // Nix start - serialize the vanilla-loadable Persistent Form
 +            item = net.minecraft.world.item.ItemStack.CODEC.encodeStart(
 +                ops,
-+                club.plutoproject.nix.contentsystem.ContentSystemServices.current().persistentForm(CraftItemStack.unwrap(itemStack))
++                club.plutoproject.nix.contentsystem.ContentRuntime.current().persistentForm(CraftItemStack.unwrap(itemStack))
 +            ).getOrThrow().getAsJsonObject();
 +            // Nix end - serialize the vanilla-loadable Persistent Form
          } finally {
@@ -522,7 +536,7 @@ index 80317dc41f85b91d7219f370d6f51e79496b09c4..3bbcba499e57772dceb7d04d5bbf7176
          com.mojang.serialization.DynamicOps<com.google.gson.JsonElement> ops = CraftRegistry.getMinecraftRegistry().createSerializationContext(com.mojang.serialization.JsonOps.INSTANCE);
 -        return CraftItemStack.asCraftMirror(net.minecraft.world.item.ItemStack.CODEC.parse(ops, data).getOrThrow(IllegalArgumentException::new));
 +        // Nix start - recover Content System metadata after vanilla JSON decoding
-+        return CraftItemStack.asCraftMirror(club.plutoproject.nix.contentsystem.ContentSystemServices.current().recover(net.minecraft.world.item.ItemStack.CODEC.parse(ops, data).getOrThrow(IllegalArgumentException::new)));
++        return CraftItemStack.asCraftMirror(club.plutoproject.nix.contentsystem.ContentRuntime.current().recover(net.minecraft.world.item.ItemStack.CODEC.parse(ops, data).getOrThrow(IllegalArgumentException::new)));
 +        // Nix end - recover Content System metadata after vanilla JSON decoding
      }
  

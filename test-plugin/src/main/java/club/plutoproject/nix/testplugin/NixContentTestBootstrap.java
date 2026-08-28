@@ -1,11 +1,10 @@
 package club.plutoproject.nix.testplugin;
 
-import club.plutoproject.nix.contentsystem.ItemHooks;
-import club.plutoproject.nix.contentsystem.ItemInteractionResult;
-import club.plutoproject.nix.contentsystem.ItemMineBlockResult;
-import club.plutoproject.nix.contentsystem.ItemTypeRegistryEntry;
-import club.plutoproject.nix.contentsystem.ItemUseResult;
-import club.plutoproject.nix.contentsystem.RegistryEvents;
+import club.plutoproject.nix.contentsystem.hook.ItemHooks;
+import club.plutoproject.nix.contentsystem.hook.result.ItemMineBlockResult;
+import club.plutoproject.nix.contentsystem.hook.result.ItemUseResult;
+import club.plutoproject.nix.contentsystem.registry.ItemTypeRegistryEntry;
+import club.plutoproject.nix.contentsystem.registry.RegistryEvents;
 import com.mojang.serialization.Codec;
 import io.papermc.paper.datacomponent.DataComponentTypes;
 import io.papermc.paper.datacomponent.item.Consumable;

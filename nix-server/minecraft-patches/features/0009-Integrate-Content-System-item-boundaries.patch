@@ -35,7 +35,7 @@ index 79b9bc27f39a8b39198c45b3016ed072fd2dbabc..95091fd83f6b7b249259c675880cf2c3
              io.papermc.paper.registry.PaperRegistryListenerManager.INSTANCE.runFreezeListeners(registry.key(), STATIC_ACCESS_CONVERSIONS); // Paper
              registry.freeze();
 diff --git a/net/minecraft/network/Connection.java b/net/minecraft/network/Connection.java
-index 9fbc7e93712672dbab67f931e2aee447d803607b..a62975077ee11ec74f790eed9ee674db8d8a35ae 100644
+index 9fbc7e93712672dbab67f931e2aee447d803607b..981b31280cd3815884f6de8cd6bb59a5bfa7dbd8 100644
 --- a/net/minecraft/network/Connection.java
 +++ b/net/minecraft/network/Connection.java
 @@ -494,6 +494,8 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
@@ -43,7 +43,7 @@ index 9fbc7e93712672dbab67f931e2aee447d803607b..a62975077ee11ec74f790eed9ee674db
          // Paper start - Optimize network
          final net.minecraft.server.level.ServerPlayer player = this.getPlayer();
 +        // Nix start - make every network ItemStack encode for its receiving viewer
-+        try (final club.plutoproject.nix.contentsystem.ContentSystemServices.ProjectionScope ignored = club.plutoproject.nix.contentsystem.ContentSystemServices.enterNetworkProjectionViewer(player)) {
++        try (final club.plutoproject.nix.contentsystem.ContentRuntime.ProjectionScope ignored = club.plutoproject.nix.contentsystem.ContentRuntime.enterNetworkProjectionViewer(player)) {
          if (!this.isConnected()) {
              packet.onPacketDispatchFinish(player, null);
              return;
@@ -56,7 +56,7 @@ index 9fbc7e93712672dbab67f931e2aee447d803607b..a62975077ee11ec74f790eed9ee674db
  
      public void flushChannel() {
 diff --git a/net/minecraft/server/level/ServerEntity.java b/net/minecraft/server/level/ServerEntity.java
-index 60af82925d2f7e605bf7340cf01f1a5668f4d725..5182bd3402e25226b09e80a379c32b0d818797ad 100644
+index 60af82925d2f7e605bf7340cf01f1a5668f4d725..5ea6470e8694461a1dfc6d99165584550f737a48 100644
 --- a/net/minecraft/server/level/ServerEntity.java
 +++ b/net/minecraft/server/level/ServerEntity.java
 @@ -329,7 +329,9 @@ public class ServerEntity {
@@ -101,7 +101,7 @@ index 60af82925d2f7e605bf7340cf01f1a5668f4d725..5182bd3402e25226b09e80a379c32b0d
 +                projected.add(new SynchedEntityData.DataValue(
 +                    value.id(),
 +                    value.serializer(),
-+                    club.plutoproject.nix.contentsystem.ContentSystemServices.current().project(itemStack, viewer.getBukkitEntity())
++                    club.plutoproject.nix.contentsystem.ContentRuntime.current().project(itemStack, viewer.getBukkitEntity())
 +                ));
 +            } else if (projected != null) {
 +                projected.add(value);
@@ -117,7 +117,7 @@ index 60af82925d2f7e605bf7340cf01f1a5668f4d725..5182bd3402e25226b09e80a379c32b0d
 +        for (final Pair<EquipmentSlot, ItemStack> slot : slots) {
 +            projected.add(Pair.of(
 +                slot.getFirst(),
-+                club.plutoproject.nix.contentsystem.ContentSystemServices.current().project(slot.getSecond(), viewer.getBukkitEntity())
++                club.plutoproject.nix.contentsystem.ContentRuntime.current().project(slot.getSecond(), viewer.getBukkitEntity())
 +            ));
 +        }
 +        return projected;
@@ -196,7 +196,7 @@ index 3cd4e850f223100b61ac6831a87dd38f3a3bb58f..77631d741a0fe4d13444770887f6bc65
      };
      private final ContainerListener containerListener = new ContainerListener() {
 diff --git a/net/minecraft/server/network/ServerGamePacketListenerImpl.java b/net/minecraft/server/network/ServerGamePacketListenerImpl.java
-index c2aba28916da7f8b0bc8a325cddaa9bb7ecfb251..1f886e23100d63d991bc0a8540814ddf41c07c24 100644
+index c2aba28916da7f8b0bc8a325cddaa9bb7ecfb251..b4e8605d62d4ca99f5818501ef5bd7cdbd392147 100644
 --- a/net/minecraft/server/network/ServerGamePacketListenerImpl.java
 +++ b/net/minecraft/server/network/ServerGamePacketListenerImpl.java
 @@ -2934,7 +2934,14 @@ public class ServerGamePacketListenerImpl
@@ -207,7 +207,7 @@ index c2aba28916da7f8b0bc8a325cddaa9bb7ecfb251..1f886e23100d63d991bc0a8540814ddf
 +                                    // Nix start - project corrective equipment for this viewer
 +                                    .map((slot) -> com.mojang.datafixers.util.Pair.of(
 +                                        slot,
-+                                        club.plutoproject.nix.contentsystem.ContentSystemServices.current().project(
++                                        club.plutoproject.nix.contentsystem.ContentRuntime.current().project(
 +                                            ((LivingEntity) target).getItemBySlot(slot).copy(), ServerGamePacketListenerImpl.this.player.getBukkitEntity()
 +                                        )
 +                                    ))
@@ -221,7 +221,7 @@ index c2aba28916da7f8b0bc8a325cddaa9bb7ecfb251..1f886e23100d63d991bc0a8540814ddf
              boolean drop = packet.slotNum() < 0;
 -            ItemStack itemStack = packet.itemStack();
 +            // Nix start - recover the complete projected creative stack before validation
-+            ItemStack itemStack = club.plutoproject.nix.contentsystem.ContentSystemServices.current().recover(packet.itemStack());
++            ItemStack itemStack = club.plutoproject.nix.contentsystem.ContentRuntime.current().recover(packet.itemStack());
 +            // Nix end - recover the complete projected creative stack before validation
              if (!itemStack.isItemEnabled(this.player.level().enabledFeatures())) {
                  return;
@@ -340,7 +340,7 @@ index c800c894a921ae77ed1757794ddf8d737b05681e..5617649e85b2bae8bcbc9b5b344f516a
          }
  
 diff --git a/net/minecraft/world/entity/player/Inventory.java b/net/minecraft/world/entity/player/Inventory.java
-index cd7714dffcd7e7b6d96d18a97e65fd0914a739d1..f54b201ada749033dd4a08fc8a7d4aa286cdaf21 100644
+index cd7714dffcd7e7b6d96d18a97e65fd0914a739d1..51d17834a3a5f14851f43b369812b28824dc0571 100644
 --- a/net/minecraft/world/entity/player/Inventory.java
 +++ b/net/minecraft/world/entity/player/Inventory.java
 @@ -431,7 +431,19 @@ public class Inventory implements Container, Nameable {
@@ -356,7 +356,7 @@ index cd7714dffcd7e7b6d96d18a97e65fd0914a739d1..f54b201ada749033dd4a08fc8a7d4aa2
 +                serverPlayer.containerMenu.setRemoteSlot(menuSlot.getAsInt(), this.getItem(slot));
 +                itemStack = serverPlayer.containerMenu.getRemoteSlot(menuSlot.getAsInt());
 +            } else {
-+                itemStack = club.plutoproject.nix.contentsystem.ContentSystemServices.current().project(itemStack, serverPlayer.getBukkitEntity());
++                itemStack = club.plutoproject.nix.contentsystem.ContentRuntime.current().project(itemStack, serverPlayer.getBukkitEntity());
 +            }
 +        }
 +        // Nix end - project the inventory update for its receiving player
@@ -555,7 +555,7 @@ index cca32d1798ee90ecec8bf72f629ab777def67f66..cc553513755a574d5f7137d2a2d0471e
                      return ItemStack.EMPTY;
                  }
 diff --git a/net/minecraft/world/inventory/RemoteSlot.java b/net/minecraft/world/inventory/RemoteSlot.java
-index 14146628c5b1a972317f9889ff6a45ab1f697f67..82c0f477db4ab86e50e0d93d0c221bbe8a8077aa 100644
+index 14146628c5b1a972317f9889ff6a45ab1f697f67..2b9efcba092ca71c006d5dfd6e6c5ae39f912948 100644
 --- a/net/minecraft/world/inventory/RemoteSlot.java
 +++ b/net/minecraft/world/inventory/RemoteSlot.java
 @@ -7,18 +7,32 @@ import org.jspecify.annotations.Nullable;
@@ -603,7 +603,7 @@ index 14146628c5b1a972317f9889ff6a45ab1f697f67..82c0f477db4ab86e50e0d93d0c221bbe
          private final HashedPatchMap.HashGenerator hasher;
 +        // Nix start - keep the viewer-specific canonical and projected snapshots
 +        private final net.minecraft.server.level.@Nullable ServerPlayer viewer;
-+        private final club.plutoproject.nix.contentsystem.@Nullable ContentSystemRemoteSlotState contentSystemState;
++        private final club.plutoproject.nix.contentsystem.projection.@Nullable ProjectedSlotState contentSystemState;
 +        // Nix end - keep the viewer-specific canonical and projected snapshots
          private @Nullable ItemStack remoteStack = null;
          private @Nullable HashedStack remoteHash = null;
@@ -618,7 +618,7 @@ index 14146628c5b1a972317f9889ff6a45ab1f697f67..82c0f477db4ab86e50e0d93d0c221bbe
 +        public Synchronized(final HashedPatchMap.HashGenerator hasher, final net.minecraft.server.level.@Nullable ServerPlayer viewer) {
              this.hasher = hasher;
 +            this.viewer = viewer;
-+            this.contentSystemState = viewer == null ? null : new club.plutoproject.nix.contentsystem.ContentSystemRemoteSlotState();
++            this.contentSystemState = viewer == null ? null : new club.plutoproject.nix.contentsystem.projection.ProjectedSlotState();
          }
 +        // Nix end - bind each remote slot to its receiving viewer
  
@@ -627,13 +627,13 @@ index 14146628c5b1a972317f9889ff6a45ab1f697f67..82c0f477db4ab86e50e0d93d0c221bbe
 -            this.remoteStack = outgoing.copy();
 +            // Nix start - project and record one exact remote representation
 +            if (this.contentSystemState != null && this.viewer != null) {
-+                final club.plutoproject.nix.contentsystem.ContentSystemImpl service = club.plutoproject.nix.contentsystem.ContentSystemServices.current();
++                final club.plutoproject.nix.contentsystem.ContentSystemImpl service = club.plutoproject.nix.contentsystem.ContentRuntime.current();
 +                this.contentSystemState.acceptClientClaim(null);
 +                this.contentSystemState.synchronize(
 +                    outgoing,
 +                    this.viewer.getBukkitEntity(),
 +                    service.projectionRevision(this.viewer.getBukkitEntity()),
-+                    service.projections()
++                    service.projector()
 +                );
 +                this.remoteStack = this.contentSystemState.remoteStack();
 +            } else {
@@ -660,12 +660,12 @@ index 14146628c5b1a972317f9889ff6a45ab1f697f67..82c0f477db4ab86e50e0d93d0c221bbe
          public boolean matches(final ItemStack local) {
 +            // Nix start - compare claims and runtime state against projection
 +            if (this.contentSystemState != null && this.viewer != null) {
-+                final club.plutoproject.nix.contentsystem.ContentSystemImpl service = club.plutoproject.nix.contentsystem.ContentSystemServices.current();
-+                final club.plutoproject.nix.contentsystem.ContentSystemRemoteSlotState.ProjectionResult result = this.contentSystemState.synchronize(
++                final club.plutoproject.nix.contentsystem.ContentSystemImpl service = club.plutoproject.nix.contentsystem.ContentRuntime.current();
++                final club.plutoproject.nix.contentsystem.projection.ProjectedSlotState.ProjectionResult result = this.contentSystemState.synchronize(
 +                    local,
 +                    this.viewer.getBukkitEntity(),
 +                    service.projectionRevision(this.viewer.getBukkitEntity()),
-+                    service.projections()
++                    service.projector()
 +                );
 +                this.remoteStack = this.contentSystemState.remoteStack();
 +                if (this.contentSystemState.clientClaim() != null) {
@@ -818,9 +818,24 @@ index a6a5800f8c13977cedafc0cce95aed3a05306230..ad54ffbe0191911586a4f709eb46ee5c
      public final FeatureFlagSet requiredFeatures() {
          return this.requiredFeatures;
 diff --git a/net/minecraft/world/item/ItemStack.java b/net/minecraft/world/item/ItemStack.java
-index 44a7590558fa73fb570f76ba7a4e7db1415d08f7..7cc3f3d5c3e0d0e18f1149583c56c8317b971c68 100644
+index 44a7590558fa73fb570f76ba7a4e7db1415d08f7..1c19ef016ad7f223d8efe395afaf3e3485610d1e 100644
 --- a/net/minecraft/world/item/ItemStack.java
 +++ b/net/minecraft/world/item/ItemStack.java
+@@ -1,5 +1,6 @@
+ package net.minecraft.world.item;
+ 
++import club.plutoproject.nix.contentsystem.registry.CustomDataComponentType;
+ import com.google.common.collect.Lists;
+ import com.mojang.logging.LogUtils;
+ import com.mojang.serialization.Codec;
+@@ -45,7 +46,6 @@ import net.minecraft.server.level.ServerPlayer;
+ import net.minecraft.stats.Stats;
+ import net.minecraft.util.ExtraCodecs;
+ import net.minecraft.util.Mth;
+-import net.minecraft.util.NullOps;
+ import net.minecraft.util.StringUtil;
+ import net.minecraft.util.Unit;
+ import net.minecraft.world.InteractionHand;
 @@ -111,11 +111,15 @@ public final class ItemStack implements DataComponentHolder, ItemInstance {
          "ItemStack",
          subCodec -> RecordCodecBuilder.mapCodec(
@@ -872,32 +887,32 @@ index 44a7590558fa73fb570f76ba7a4e7db1415d08f7..7cc3f3d5c3e0d0e18f1149583c56c831
  
 +    // Nix start - bridge ordinary ItemStack codec persistence and recovery
 +    private static Holder<Item> persistentTypeHolder(final ItemStack itemStack) {
-+        return club.plutoproject.nix.contentsystem.ContentSystemServices.current().persistentForm(itemStack).typeHolder();
++        return club.plutoproject.nix.contentsystem.ContentRuntime.current().persistentForm(itemStack).typeHolder();
 +    }
 +
 +    private static int persistentCount(final ItemStack itemStack) {
-+        return club.plutoproject.nix.contentsystem.ContentSystemServices.current().persistentForm(itemStack).getCount();
++        return club.plutoproject.nix.contentsystem.ContentRuntime.current().persistentForm(itemStack).getCount();
 +    }
 +
 +    private static DataComponentPatch persistentComponents(final ItemStack itemStack) {
-+        return club.plutoproject.nix.contentsystem.ContentSystemServices.current().persistentForm(itemStack).getComponentsPatch();
++        return club.plutoproject.nix.contentsystem.ContentRuntime.current().persistentForm(itemStack).getComponentsPatch();
 +    }
 +
 +    private static ItemStack fromPersistentCodec(final Holder<Item> item, final int count, final DataComponentPatch components) {
-+        return club.plutoproject.nix.contentsystem.ContentSystemServices.current().recover(new ItemStack(item, count, components));
++        return club.plutoproject.nix.contentsystem.ContentRuntime.current().recover(new ItemStack(item, count, components));
 +    }
 +    // Nix end - bridge ordinary ItemStack codec persistence and recovery
 +
 +    // Nix start - keep custom component types out of vanilla network streams
 +    private ItemStack networkForm() {
-+        final org.bukkit.entity.Player viewer = club.plutoproject.nix.contentsystem.ContentSystemServices.networkProjectionViewer();
++        final org.bukkit.entity.Player viewer = club.plutoproject.nix.contentsystem.ContentRuntime.networkProjectionViewer();
 +        if (viewer != null) {
-+            if (this.getItem() instanceof club.plutoproject.nix.contentsystem.ContentSystemItem || hasContentSystemComponent(this)) {
-+                return club.plutoproject.nix.contentsystem.ContentSystemServices.current().project(this, viewer);
++            if (this.getItem() instanceof club.plutoproject.nix.contentsystem.item.CustomItem || hasContentSystemComponent(this)) {
++                return club.plutoproject.nix.contentsystem.ContentRuntime.current().project(this, viewer);
 +            }
 +            return this;
 +        }
-+        if (this.getItem() instanceof club.plutoproject.nix.contentsystem.ContentSystemItem || hasContentSystemComponent(this)) {
++        if (this.getItem() instanceof club.plutoproject.nix.contentsystem.item.CustomItem || hasContentSystemComponent(this)) {
 +            throw new IllegalStateException("A Content System item must be projected before network encoding");
 +        }
 +        return this;
@@ -905,12 +920,12 @@ index 44a7590558fa73fb570f76ba7a4e7db1415d08f7..7cc3f3d5c3e0d0e18f1149583c56c831
 +
 +    private static boolean hasContentSystemComponent(final ItemStack itemStack) {
 +        for (final DataComponentType<?> type : itemStack.getComponents().keySet()) {
-+            if (type instanceof club.plutoproject.nix.contentsystem.ContentSystemDataComponentType<?>) {
++            if (type instanceof CustomDataComponentType<?>) {
 +                return true;
 +            }
 +        }
 +        for (final java.util.Map.Entry<DataComponentType<?>, Optional<?>> entry : itemStack.getComponentsPatch().entrySet()) {
-+            if (entry.getKey() instanceof club.plutoproject.nix.contentsystem.ContentSystemDataComponentType<?>) {
++            if (entry.getKey() instanceof CustomDataComponentType<?>) {
 +                return true;
 +            }
 +        }
@@ -958,10 +973,17 @@ index 44a7590558fa73fb570f76ba7a4e7db1415d08f7..7cc3f3d5c3e0d0e18f1149583c56c831
          DamageResistant damageResistant = this.get(DataComponents.DAMAGE_RESISTANT);
          return damageResistant == null || !damageResistant.isResistantTo(source);
 diff --git a/net/minecraft/world/item/ItemStackTemplate.java b/net/minecraft/world/item/ItemStackTemplate.java
-index ccfbb57acd405c6a3f26eb520930c8d83155f9dd..64b8556d881012c22f30c7e36576f061ba796510 100644
+index ccfbb57acd405c6a3f26eb520930c8d83155f9dd..4af20f7eae037d36a71de506f68559c4283e010c 100644
 --- a/net/minecraft/world/item/ItemStackTemplate.java
 +++ b/net/minecraft/world/item/ItemStackTemplate.java
-@@ -20,14 +20,19 @@ public record ItemStackTemplate(Holder<Item> item, @Override int count, DataComp
+@@ -1,5 +1,6 @@
+ package net.minecraft.world.item;
+ 
++import club.plutoproject.nix.contentsystem.registry.CustomDataComponentType;
+ import com.mojang.logging.LogUtils;
+ import com.mojang.serialization.Codec;
+ import com.mojang.serialization.MapCodec;
+@@ -20,14 +21,19 @@ public record ItemStackTemplate(Holder<Item> item, @Override int count, DataComp
      private static final Logger LOGGER = LogUtils.getLogger();
      public static final MapCodec<ItemStackTemplate> MAP_CODEC = RecordCodecBuilder.mapCodec(
          i -> i.group(
@@ -986,7 +1008,7 @@ index ccfbb57acd405c6a3f26eb520930c8d83155f9dd..64b8556d881012c22f30c7e36576f061
          Item.STREAM_CODEC,
          ItemStackTemplate::item,
          ByteBufCodecs.VAR_INT,
-@@ -37,6 +42,12 @@ public record ItemStackTemplate(Holder<Item> item, @Override int count, DataComp
+@@ -37,6 +43,12 @@ public record ItemStackTemplate(Holder<Item> item, @Override int count, DataComp
          ItemStackTemplate::new
      );
  
@@ -999,7 +1021,7 @@ index ccfbb57acd405c6a3f26eb520930c8d83155f9dd..64b8556d881012c22f30c7e36576f061
      public ItemStackTemplate(final Item item) {
          this(item.builtInRegistryHolder(), 1, DataComponentPatch.EMPTY);
      }
-@@ -59,6 +70,69 @@ public record ItemStackTemplate(Holder<Item> item, @Override int count, DataComp
+@@ -59,6 +71,69 @@ public record ItemStackTemplate(Holder<Item> item, @Override int count, DataComp
          }
      }
  
@@ -1008,7 +1030,7 @@ index ccfbb57acd405c6a3f26eb520930c8d83155f9dd..64b8556d881012c22f30c7e36576f061
 +        if (!template.item().areComponentsBound()) {
 +            return template;
 +        }
-+        final ItemStack persistent = club.plutoproject.nix.contentsystem.ContentSystemServices.current().persistentForm(
++        final ItemStack persistent = club.plutoproject.nix.contentsystem.ContentRuntime.current().persistentForm(
 +            new ItemStack(template.item(), template.count(), template.components())
 +        );
 +        return new ItemStackTemplate(persistent.typeHolder(), persistent.getCount(), persistent.getComponentsPatch());
@@ -1018,7 +1040,7 @@ index ccfbb57acd405c6a3f26eb520930c8d83155f9dd..64b8556d881012c22f30c7e36576f061
 +        if (!item.areComponentsBound()) {
 +            return new ItemStackTemplate(item, count, components);
 +        }
-+        final ItemStack recovered = club.plutoproject.nix.contentsystem.ContentSystemServices.current().recover(new ItemStack(item, count, components));
++        final ItemStack recovered = club.plutoproject.nix.contentsystem.ContentRuntime.current().recover(new ItemStack(item, count, components));
 +        return new ItemStackTemplate(recovered.typeHolder(), recovered.getCount(), recovered.getComponentsPatch());
 +    }
 +
@@ -1026,26 +1048,26 @@ index ccfbb57acd405c6a3f26eb520930c8d83155f9dd..64b8556d881012c22f30c7e36576f061
 +        if (!template.item().areComponentsBound()) {
 +            return template;
 +        }
-+        final org.bukkit.entity.Player viewer = club.plutoproject.nix.contentsystem.ContentSystemServices.networkProjectionViewer();
++        final org.bukkit.entity.Player viewer = club.plutoproject.nix.contentsystem.ContentRuntime.networkProjectionViewer();
 +        final ItemStack stack = new ItemStack(template.item(), template.count(), template.components());
 +        if (viewer != null) {
-+            if (stack.getItem() instanceof club.plutoproject.nix.contentsystem.ContentSystemItem || hasContentSystemComponent(stack)) {
-+                final ItemStack projected = club.plutoproject.nix.contentsystem.ContentSystemServices.current().project(stack, viewer);
++            if (stack.getItem() instanceof club.plutoproject.nix.contentsystem.item.CustomItem || hasContentSystemComponent(stack)) {
++                final ItemStack projected = club.plutoproject.nix.contentsystem.ContentRuntime.current().project(stack, viewer);
 +                return new ItemStackTemplate(projected.typeHolder(), projected.getCount(), projected.getComponentsPatch());
 +            }
 +            return template;
 +        }
 +        for (final net.minecraft.core.component.DataComponentType<?> type : stack.getComponents().keySet()) {
-+            if (type instanceof club.plutoproject.nix.contentsystem.ContentSystemDataComponentType<?>) {
++            if (type instanceof CustomDataComponentType<?>) {
 +                throw new IllegalStateException("A Content System template must be projected before network encoding");
 +            }
 +        }
 +        for (final java.util.Map.Entry<net.minecraft.core.component.DataComponentType<?>, java.util.Optional<?>> entry : stack.getComponentsPatch().entrySet()) {
-+            if (entry.getKey() instanceof club.plutoproject.nix.contentsystem.ContentSystemDataComponentType<?>) {
++            if (entry.getKey() instanceof CustomDataComponentType<?>) {
 +                throw new IllegalStateException("A Content System template must be projected before network encoding");
 +            }
 +        }
-+        if (stack.getItem() instanceof club.plutoproject.nix.contentsystem.ContentSystemItem) {
++        if (stack.getItem() instanceof club.plutoproject.nix.contentsystem.item.CustomItem) {
 +            throw new IllegalStateException("A Content System template must be projected before network encoding");
 +        }
 +        return template;
@@ -1053,12 +1075,12 @@ index ccfbb57acd405c6a3f26eb520930c8d83155f9dd..64b8556d881012c22f30c7e36576f061
 +
 +    private static boolean hasContentSystemComponent(final ItemStack stack) {
 +        for (final net.minecraft.core.component.DataComponentType<?> type : stack.getComponents().keySet()) {
-+            if (type instanceof club.plutoproject.nix.contentsystem.ContentSystemDataComponentType<?>) {
++            if (type instanceof CustomDataComponentType<?>) {
 +                return true;
 +            }
 +        }
 +        for (final java.util.Map.Entry<net.minecraft.core.component.DataComponentType<?>, java.util.Optional<?>> entry : stack.getComponentsPatch().entrySet()) {
-+            if (entry.getKey() instanceof club.plutoproject.nix.contentsystem.ContentSystemDataComponentType<?>) {
++            if (entry.getKey() instanceof CustomDataComponentType<?>) {
 +                return true;
 +            }
 +        }
@@ -1069,7 +1091,7 @@ index ccfbb57acd405c6a3f26eb520930c8d83155f9dd..64b8556d881012c22f30c7e36576f061
      public static ItemStackTemplate fromNonEmptyStack(final ItemStack itemStack) {
          if (itemStack.isEmpty()) {
              throw new IllegalStateException("Stack must be non-empty");
-@@ -76,8 +150,17 @@ public record ItemStackTemplate(Holder<Item> item, @Override int count, DataComp
+@@ -76,8 +151,17 @@ public record ItemStackTemplate(Holder<Item> item, @Override int count, DataComp
      }
  
      public ItemStack create() {
@@ -1081,14 +1103,14 @@ index ccfbb57acd405c6a3f26eb520930c8d83155f9dd..64b8556d881012c22f30c7e36576f061
 +    private static ItemStack recoverIfNeeded(final ItemStack result) {
 +        final net.minecraft.world.item.component.CustomData customData = result.get(net.minecraft.core.component.DataComponents.CUSTOM_DATA);
 +        return customData != null && customData.contains("nix:item")
-+            ? club.plutoproject.nix.contentsystem.ContentSystemServices.current().recover(result)
++            ? club.plutoproject.nix.contentsystem.ContentRuntime.current().recover(result)
 +            : result;
      }
 +    // Nix end - recover a template envelope when it becomes a runtime stack
  
      private ItemStack validate(final ItemStack result) {
          Optional<Error<ItemStack>> error = ItemStack.validateStrict(result).error();
-@@ -96,6 +179,9 @@ public record ItemStackTemplate(Holder<Item> item, @Override int count, DataComp
+@@ -96,6 +180,9 @@ public record ItemStackTemplate(Holder<Item> item, @Override int count, DataComp
      public ItemStack apply(final int count, final DataComponentPatch additionalPatch) {
          ItemStack result = new ItemStack(this.item, count, additionalPatch);
          result.applyComponents(this.components);
