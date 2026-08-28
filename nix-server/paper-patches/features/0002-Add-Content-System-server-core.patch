@@ -85,36 +85,6 @@ index 17cf4ecbd97bf655a61a476119b7a1a00996aafd..a8420cfa6b7d9b4663a8fe44fffdab82
              start(Registries.GAME_RULE, RegistryKey.GAME_RULE).craft(GameRule.class, CraftGameRule::new).build(),
              start(Registries.POINT_OF_INTEREST_TYPE, RegistryKey.POINT_OF_INTEREST_TYPE).craft(PoiTypes.class, PaperPoiType::new).build(),
  
-diff --git a/src/main/java/io/papermc/paper/registry/PaperRegistryListenerManager.java b/src/main/java/io/papermc/paper/registry/PaperRegistryListenerManager.java
-index 24cd0d16ccc46de721c85d11559016c26ec281d4..0dc2d4182bfeab744472a1cb0a7a6f78337435ee 100644
---- a/src/main/java/io/papermc/paper/registry/PaperRegistryListenerManager.java
-+++ b/src/main/java/io/papermc/paper/registry/PaperRegistryListenerManager.java
-@@ -39,6 +39,9 @@ public class PaperRegistryListenerManager {
- 
-     public final RegistryEventMap valueAddEventTypes = new RegistryEventMap("value add");
-     public final RegistryEventMap composeEventType = new RegistryEventMap("compose");
-+    // Nix start - remember compose phases triggered early for registry dependencies
-+    private final java.util.Set<ResourceKey<?>> completedCompose = java.util.concurrent.ConcurrentHashMap.newKeySet();
-+    // Nix end - remember compose phases triggered early for registry dependencies
- 
-     private PaperRegistryListenerManager() {
-     }
-@@ -157,6 +160,15 @@ public class PaperRegistryListenerManager {
-     }
- 
-     public <M, T extends Keyed, B extends PaperRegistryBuilder<M, T>> void runFreezeListeners(final ResourceKey<? extends Registry<M>> resourceKey, final Conversions conversions) {
-+        // Nix start - compose custom component types before custom item builders
-+        if (!this.completedCompose.add(resourceKey)) {
-+            return;
-+        }
-+        if (resourceKey.equals(net.minecraft.core.registries.Registries.ITEM)
-+            && this.composeEventType.hasHandlers(io.papermc.paper.registry.RegistryKey.DATA_COMPONENT_TYPE)) {
-+            this.runFreezeListeners(net.minecraft.core.registries.Registries.DATA_COMPONENT_TYPE, conversions);
-+        }
-+        // Nix end - compose custom component types before custom item builders
-         final RegistryEntry<M, T> entry = PaperRegistries.getEntry(resourceKey);
-         if (entry == null || !entry.meta().modificationApiSupport().canAdd() || !this.composeEventType.hasHandlers(entry.apiKey())) {
-             return;
 diff --git a/src/main/java/io/papermc/paper/registry/WritableCraftRegistry.java b/src/main/java/io/papermc/paper/registry/WritableCraftRegistry.java
 index 9e8672c705eb27c9b7d190129129454fd83cf7d5..09274da553940db0355fe5c18fb58215ee18d348 100644
 --- a/src/main/java/io/papermc/paper/registry/WritableCraftRegistry.java

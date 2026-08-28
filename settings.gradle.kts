@@ -13,6 +13,7 @@ rootProject.name = "nix"
 
 include(":nix-server")
 include(":nix-api")
+include(":test-plugin")
 
 gradle.lifecycle.beforeProject {
     val mcVersion = providers.gradleProperty("mcVersion").get().trim()

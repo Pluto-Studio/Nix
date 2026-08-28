@@ -7,8 +7,33 @@ Route gameplay hooks through source-compatible enriched Item overloads while pre
 
 Encode ItemStack and ItemStackTemplate persistence through the Content System persistent form, recover after decode, recursively carry nested envelopes, and project every network stack for its receiving viewer. Make container remote slots retain canonical and projected snapshots with revision-aware claims, and use the same projected values for initial, slot, cursor, inventory, equipment, and entity-data packets.
 
-Projection work remains synchronous and allocates viewer-specific packet/state copies only when a stack or nested template crosses a boundary; unchanged remote runtime and revision skip modifier execution. The per-slot snapshots and opaque envelopes add bounded transient memory and metadata, while the centralized stream boundary and nested mapping add maintenance points when Mojang introduces new ItemStack-bearing components.
+Freeze the data component type registry before item compose handlers run so item builders can resolve bound vanilla and custom component holders. This changes only bootstrap freeze ordering and adds no steady-state allocation or runtime cost.
 
+Projection work remains synchronous and allocates viewer-specific packet/state copies only when a stack or nested template crosses a boundary; unchanged remote runtime and revision skip modifier execution. The per-slot snapshots and opaque envelopes add bounded transient memory and metadata, while the centralized stream boundary, explicit registry dependency, and nested mapping add maintenance points when Mojang introduces new ItemStack-bearing components.
+
+diff --git a/net/minecraft/core/registries/BuiltInRegistries.java b/net/minecraft/core/registries/BuiltInRegistries.java
+index 79b9bc27f39a8b39198c45b3016ed072fd2dbabc..95091fd83f6b7b249259c675880cf2c3f1bb71a8 100644
+--- a/net/minecraft/core/registries/BuiltInRegistries.java
++++ b/net/minecraft/core/registries/BuiltInRegistries.java
+@@ -439,7 +439,18 @@ public class BuiltInRegistries {
+     private static void freeze() {
+         REGISTRY.freeze();
+ 
++        // Nix start - freeze component types before composing item types
++        bindBootstrappedTagsToEmpty(DATA_COMPONENT_TYPE);
++        io.papermc.paper.registry.PaperRegistryListenerManager.INSTANCE.runFreezeListeners(DATA_COMPONENT_TYPE.key(), STATIC_ACCESS_CONVERSIONS);
++        DATA_COMPONENT_TYPE.freeze();
++        // Nix end - freeze component types before composing item types
++
+         for (Registry<?> registry : REGISTRY) {
++            // Nix start - component types were frozen before dependent item composition
++            if (registry == DATA_COMPONENT_TYPE) {
++                continue;
++            }
++            // Nix end - component types were frozen before dependent item composition
+             bindBootstrappedTagsToEmpty(registry);
+             io.papermc.paper.registry.PaperRegistryListenerManager.INSTANCE.runFreezeListeners(registry.key(), STATIC_ACCESS_CONVERSIONS); // Paper
+             registry.freeze();
 diff --git a/net/minecraft/network/Connection.java b/net/minecraft/network/Connection.java
 index 9fbc7e93712672dbab67f931e2aee447d803607b..a62975077ee11ec74f790eed9ee674db8d8a35ae 100644
 --- a/net/minecraft/network/Connection.java
@@ -171,7 +196,7 @@ index 3cd4e850f223100b61ac6831a87dd38f3a3bb58f..77631d741a0fe4d13444770887f6bc65
      };
      private final ContainerListener containerListener = new ContainerListener() {
 diff --git a/net/minecraft/server/network/ServerGamePacketListenerImpl.java b/net/minecraft/server/network/ServerGamePacketListenerImpl.java
-index c2aba28916da7f8b0bc8a325cddaa9bb7ecfb251..e9a9e84344270853906e2b27a49f6beadc81896b 100644
+index c2aba28916da7f8b0bc8a325cddaa9bb7ecfb251..1f886e23100d63d991bc0a8540814ddf41c07c24 100644
 --- a/net/minecraft/server/network/ServerGamePacketListenerImpl.java
 +++ b/net/minecraft/server/network/ServerGamePacketListenerImpl.java
 @@ -2934,7 +2934,14 @@ public class ServerGamePacketListenerImpl
@@ -190,7 +215,7 @@ index c2aba28916da7f8b0bc8a325cddaa9bb7ecfb251..e9a9e84344270853906e2b27a49f6bea
                                      .collect(Collectors.toList()), true)); // Paper - sanitize
                                  player.containerMenu.sendAllDataToRemote();
                              } else {
-@@ -3479,7 +3486,9 @@ public class ServerGamePacketListenerImpl
+@@ -3479,17 +3486,19 @@ public class ServerGamePacketListenerImpl
          PacketUtils.ensureRunningOnSameThread(packet, this, this.player.level());
          if (this.player.hasInfiniteMaterials()) {
              boolean drop = packet.slotNum() < 0;
@@ -201,6 +226,18 @@ index c2aba28916da7f8b0bc8a325cddaa9bb7ecfb251..e9a9e84344270853906e2b27a49f6bea
              if (!itemStack.isItemEnabled(this.player.level().enabledFeatures())) {
                  return;
              }
+ 
+             boolean validSlot = packet.slotNum() >= 1 && packet.slotNum() <= 45;
+             boolean validData = itemStack.isEmpty() || itemStack.getCount() <= itemStack.getMaxStackSize();
+-            if (drop || (validSlot && !ItemStack.matches(this.player.inventoryMenu.getSlot(packet.slotNum()).getItem(), packet.itemStack()))) { // Insist on valid slot
++            if (drop || (validSlot && !ItemStack.matches(this.player.inventoryMenu.getSlot(packet.slotNum()).getItem(), itemStack))) { // Insist on valid slot // Nix - compare recovered creative stacks
+                 // CraftBukkit start - Call click event
+                 org.bukkit.inventory.InventoryView inventory = this.player.inventoryMenu.getBukkitView();
+-                org.bukkit.inventory.ItemStack item = CraftItemStack.asBukkitCopy(packet.itemStack());
++                org.bukkit.inventory.ItemStack item = CraftItemStack.asBukkitCopy(itemStack); // Nix - expose the recovered creative stack
+ 
+                 SlotType type = SlotType.QUICKBAR;
+                 if (drop) {
 @@ -3516,7 +3525,10 @@ public class ServerGamePacketListenerImpl
                      case DENY:
                          // Reset the slot

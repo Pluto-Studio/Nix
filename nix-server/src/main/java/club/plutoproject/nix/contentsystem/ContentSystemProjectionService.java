@@ -288,6 +288,11 @@ public final class ContentSystemProjectionService {
             if (type instanceof ContentSystemDataComponentType<?>) {
                 continue;
             }
+            if (runtime.getItem() instanceof ContentSystemItem
+                && type == DataComponents.ITEM_MODEL
+                && !runtime.hasNonDefault(type)) {
+                continue;
+            }
             final Object runtimeValue = runtime.get(type);
             final Object targetValue = output.get(type);
             if (runtimeValue == null) {
