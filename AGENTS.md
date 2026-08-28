@@ -1,5 +1,3 @@
-Follow this workflow in order. A change is complete only after its generated-worktree commit has been rebuilt into the tracked patch layer.
-
 ## 1. Understand the state model
 
 The repository stores three pieces of durable state: the pinned Paper revision, tracked Nix patches, and the outer repository's paperweight configuration. Generated worktrees are where you edit the source:

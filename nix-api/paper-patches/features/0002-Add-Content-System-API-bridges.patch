@@ -1,0 +1,95 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nostalfinals <yuu8583@proton.me>
+Date: Fri, 28 Aug 2026 00:25:36 +0800
+Subject: [PATCH] Add Content System API bridges
+
+Expose the Content System registry-provider factory, server service accessor, and ItemType-aware ItemStack signatures. The provider delegates to Paper's existing lifecycle implementation, and ItemStack additions keep Material compatibility while delegating to the existing ItemType and stack paths.
+
+The declarations add no new per-stack state, packet work, or hot-path processing in the API layer. Runtime behavior remains the responsibility of the server implementation. The maintenance trade-off is a deliberate Paper API dependency on Nix-owned types and a required future implementation of the new delegates, which avoids duplicating Paper registry infrastructure and preserves existing Material methods.
+
+diff --git a/src/main/java/io/papermc/paper/registry/event/RegistryEventProvider.java b/src/main/java/io/papermc/paper/registry/event/RegistryEventProvider.java
+index 727cddf418defb1188c483f2883f0718acaf541c..ca936762ef2edd20621577d244242ddcede87df2 100644
+--- a/src/main/java/io/papermc/paper/registry/event/RegistryEventProvider.java
++++ b/src/main/java/io/papermc/paper/registry/event/RegistryEventProvider.java
+@@ -23,6 +23,13 @@ import org.jetbrains.annotations.ApiStatus;
+ @ApiStatus.NonExtendable
+ public interface RegistryEventProvider<T, B extends RegistryBuilder<T>> {
+ 
++    // Nix start - Expose registry provider creation for Content System events
++    @ApiStatus.Internal
++    static <T, B extends RegistryBuilder<T>> RegistryEventProvider<T, B> create(final RegistryKey<T> registryKey) {
++        return RegistryEventProviderImpl.create(registryKey);
++    }
++    // Nix end - Expose registry provider creation for Content System events
++
+     /**
+      * Gets the event type for {@link RegistryEntryAddEvent} which is fired just before
+      * an object is added to a registry.
+diff --git a/src/main/java/org/bukkit/Server.java b/src/main/java/org/bukkit/Server.java
+index a8e67888e63ae1d387e432827dc96590767b7b7f..42270c9a3a018372b70f2b8ddde14592982a8278 100644
+--- a/src/main/java/org/bukkit/Server.java
++++ b/src/main/java/org/bukkit/Server.java
+@@ -1306,6 +1306,10 @@ public interface Server extends PluginMessageRecipient, net.kyori.adventure.audi
+      */
+     @NotNull ServerConfiguration getServerConfig();
+ 
++    // Nix start - Expose the Content System service
++    @NotNull club.plutoproject.nix.contentsystem.ContentSystem getContentSystem();
++    // Nix end - Expose the Content System service
++
+     /**
+      * Gets whether this server allows flying or not.
+      *
+diff --git a/src/main/java/org/bukkit/inventory/ItemStack.java b/src/main/java/org/bukkit/inventory/ItemStack.java
+index 1e27bab861586171417d37e1777342f3edecf019..8d7b7ad8355ee76ed5255e4d9fd7bb42794983e1 100644
+--- a/src/main/java/org/bukkit/inventory/ItemStack.java
++++ b/src/main/java/org/bukkit/inventory/ItemStack.java
+@@ -65,6 +65,19 @@ public class ItemStack implements Cloneable, ConfigurationSerializable, Translat
+     }
+     // Paper end
+ 
++    // Nix start - Add ItemType factories
++    @org.jetbrains.annotations.Contract(value = "_ -> new", pure = true)
++    public static @NotNull ItemStack of(final @NotNull ItemType type) {
++        return type.createItemStack();
++    }
++
++    @org.jetbrains.annotations.Contract(value = "_, _ -> new", pure = true)
++    public static @NotNull ItemStack of(final @NotNull ItemType type, final int amount) {
++        Preconditions.checkArgument(amount > 0, "amount must be greater than 0");
++        return type.createItemStack(amount);
++    }
++    // Nix end - Add ItemType factories
++
+     // Paper start - pdc
+     /**
+      * @see #editPersistentDataContainer(Consumer)
+@@ -193,6 +206,13 @@ public class ItemStack implements Cloneable, ConfigurationSerializable, Translat
+         return this.craftDelegate.getType(); // Paper - delegate
+     }
+ 
++    // Nix start - Expose the registry-backed ItemType
++    @NotNull
++    public ItemType getItemType() {
++        return this.craftDelegate.getItemType(); // Nix - delegate
++    }
++    // Nix end - Expose the registry-backed ItemType
++
+     /**
+      * Sets the type of this item
+      * <p>
+@@ -232,6 +252,14 @@ public class ItemStack implements Cloneable, ConfigurationSerializable, Translat
+     }
+     // Paper end
+ 
++    // Nix start - Add ItemType conversion
++    @NotNull
++    @org.jetbrains.annotations.Contract(value = "_ -> new", pure = true)
++    public ItemStack withType(@NotNull ItemType type) {
++        return this.craftDelegate.withType(type); // Nix - delegate
++    }
++    // Nix end - Add ItemType conversion
++
+     /**
+      * Gets the amount of items in this stack
+      *

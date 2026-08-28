@@ -1,0 +1,1164 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nostalfinals <yuu8583@proton.me>
+Date: Fri, 28 Aug 2026 02:53:29 +0800
+Subject: [PATCH] Integrate Content System item boundaries
+
+Route gameplay hooks through source-compatible enriched Item overloads while preserving vanilla subclass dispatch and exact crafting, combat, destruction, and container-fit call sites. Keep active-use side effects and kinetic precedence in ItemStack, and recover creative stacks before validation.
+
+Encode ItemStack and ItemStackTemplate persistence through the Content System persistent form, recover after decode, recursively carry nested envelopes, and project every network stack for its receiving viewer. Make container remote slots retain canonical and projected snapshots with revision-aware claims, and use the same projected values for initial, slot, cursor, inventory, equipment, and entity-data packets.
+
+Projection work remains synchronous and allocates viewer-specific packet/state copies only when a stack or nested template crosses a boundary; unchanged remote runtime and revision skip modifier execution. The per-slot snapshots and opaque envelopes add bounded transient memory and metadata, while the centralized stream boundary and nested mapping add maintenance points when Mojang introduces new ItemStack-bearing components.
+
+diff --git a/net/minecraft/network/Connection.java b/net/minecraft/network/Connection.java
+index 9fbc7e93712672dbab67f931e2aee447d803607b..a62975077ee11ec74f790eed9ee674db8d8a35ae 100644
+--- a/net/minecraft/network/Connection.java
++++ b/net/minecraft/network/Connection.java
+@@ -494,6 +494,8 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+     private void doSendPacket(final Packet<?> packet, final @Nullable ChannelFutureListener listener, final boolean flush) {
+         // Paper start - Optimize network
+         final net.minecraft.server.level.ServerPlayer player = this.getPlayer();
++        // Nix start - make every network ItemStack encode for its receiving viewer
++        try (final club.plutoproject.nix.contentsystem.ContentSystemServices.ProjectionScope ignored = club.plutoproject.nix.contentsystem.ContentSystemServices.enterNetworkProjectionViewer(player)) {
+         if (!this.isConnected()) {
+             packet.onPacketDispatchFinish(player, null);
+             return;
+@@ -521,6 +523,7 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+             packet.onPacketDispatchFinish(player, null);
+         }
+         // Paper end - Optimize network
++        } // Nix end - make every network ItemStack encode for its receiving viewer
+     }
+ 
+     public void flushChannel() {
+diff --git a/net/minecraft/server/level/ServerEntity.java b/net/minecraft/server/level/ServerEntity.java
+index 60af82925d2f7e605bf7340cf01f1a5668f4d725..5182bd3402e25226b09e80a379c32b0d818797ad 100644
+--- a/net/minecraft/server/level/ServerEntity.java
++++ b/net/minecraft/server/level/ServerEntity.java
+@@ -329,7 +329,9 @@ public class ServerEntity {
+         Packet<ClientGamePacketListener> packet = this.entity.getAddEntityPacket(this);
+         broadcast.accept(packet);
+         if (this.trackedDataValues != null) {
+-            broadcast.accept(new ClientboundSetEntityDataPacket(this.entity.getId(), this.trackedDataValues));
++            // Nix start - project entity item data for the receiving viewer
++            broadcast.accept(new ClientboundSetEntityDataPacket(this.entity.getId(), projectEntityDataValues(this.trackedDataValues, player)));
++            // Nix end - project entity item data for the receiving viewer
+         }
+ 
+         if (this.entity instanceof LivingEntity livingEntity) {
+@@ -355,7 +357,9 @@ public class ServerEntity {
+             }
+ 
+             if (!slots.isEmpty()) {
+-                broadcast.accept(new ClientboundSetEquipmentPacket(this.entity.getId(), slots, true)); // Paper - data sanitization
++                // Nix start - project equipment for the receiving viewer
++                broadcast.accept(new ClientboundSetEquipmentPacket(this.entity.getId(), projectEquipmentSlots(slots, player), true)); // Paper - data sanitization
++                // Nix end - project equipment for the receiving viewer
+             }
+             ((LivingEntity) this.entity).detectEquipmentUpdates(); // CraftBukkit - SPIGOT-3789: sync again immediately after sending
+         }
+@@ -393,12 +397,84 @@ public class ServerEntity {
+         return Mth.unpackDegrees(this.lastSentYHeadRot);
+     }
+ 
++    // Nix start - project item-bearing entity data separately for each viewer
++    @SuppressWarnings({"rawtypes", "unchecked"})
++    public static List<SynchedEntityData.DataValue<?>> projectEntityDataValues(
++        final List<SynchedEntityData.DataValue<?>> values, final ServerPlayer viewer
++    ) {
++        List<SynchedEntityData.DataValue<?>> projected = null;
++        for (int index = 0; index < values.size(); index++) {
++            final SynchedEntityData.DataValue<?> value = values.get(index);
++            if (value.value() instanceof ItemStack itemStack) {
++                if (projected == null) {
++                    projected = new ArrayList<>(values.size());
++                    projected.addAll(values.subList(0, index));
++                }
++                projected.add(new SynchedEntityData.DataValue(
++                    value.id(),
++                    value.serializer(),
++                    club.plutoproject.nix.contentsystem.ContentSystemServices.current().project(itemStack, viewer.getBukkitEntity())
++                ));
++            } else if (projected != null) {
++                projected.add(value);
++            }
++        }
++        return projected == null ? values : projected;
++    }
++
++    private static List<Pair<EquipmentSlot, ItemStack>> projectEquipmentSlots(
++        final List<Pair<EquipmentSlot, ItemStack>> slots, final ServerPlayer viewer
++    ) {
++        final List<Pair<EquipmentSlot, ItemStack>> projected = Lists.newArrayListWithCapacity(slots.size());
++        for (final Pair<EquipmentSlot, ItemStack> slot : slots) {
++            projected.add(Pair.of(
++                slot.getFirst(),
++                club.plutoproject.nix.contentsystem.ContentSystemServices.current().project(slot.getSecond(), viewer.getBukkitEntity())
++            ));
++        }
++        return projected;
++    }
++
++    public void sendEquipmentChanges(final List<Pair<EquipmentSlot, ItemStack>> slots, final boolean sanitize) {
++        for (final net.minecraft.server.network.ServerPlayerConnection connection : this.trackedPlayers) {
++            final ServerPlayer viewer = connection.getPlayer();
++            connection.send(new ClientboundSetEquipmentPacket(this.entity.getId(), projectEquipmentSlots(slots, viewer), sanitize));
++        }
++    }
++
++    // Nix start - resend current equipment to one tracked viewer
++    public void sendEquipmentChanges(final ServerPlayer viewer) {
++        if (!(this.entity instanceof LivingEntity livingEntity)) {
++            return;
++        }
++        final List<Pair<EquipmentSlot, ItemStack>> slots = Lists.newArrayList();
++        for (final EquipmentSlot slot : EquipmentSlot.VALUES) {
++            final ItemStack itemStack = livingEntity.getItemBySlot(slot);
++            if (!itemStack.isEmpty()) {
++                slots.add(Pair.of(slot, itemStack.copy()));
++            }
++        }
++        if (!slots.isEmpty()) {
++            viewer.connection.send(new ClientboundSetEquipmentPacket(this.entity.getId(), projectEquipmentSlots(slots, viewer), true));
++        }
++    }
++    // Nix end - resend current equipment to one tracked viewer
++    // Nix end - project item-bearing entity data separately for each viewer
++
+     private void sendDirtyEntityData() {
+         SynchedEntityData entityData = this.entity.getEntityData();
+         List<SynchedEntityData.DataValue<?>> packedValues = entityData.packDirty();
+         if (packedValues != null) {
+             this.trackedDataValues = entityData.getNonDefaultValues();
+-            this.synchronizer.sendToTrackingPlayersAndSelf(new ClientboundSetEntityDataPacket(this.entity.getId(), packedValues));
++            // Nix start - use one viewer-specific entity-data packet per recipient
++            for (final net.minecraft.server.network.ServerPlayerConnection connection : this.trackedPlayers) {
++                final ServerPlayer viewer = connection.getPlayer();
++                connection.send(new ClientboundSetEntityDataPacket(this.entity.getId(), projectEntityDataValues(packedValues, viewer)));
++            }
++            if (this.entity instanceof ServerPlayer player) {
++                player.connection.send(new ClientboundSetEntityDataPacket(this.entity.getId(), projectEntityDataValues(packedValues, player)));
++            }
++            // Nix end - use one viewer-specific entity-data packet per recipient
+         }
+ 
+         if (this.entity instanceof LivingEntity livingEntity) {
+diff --git a/net/minecraft/server/level/ServerPlayer.java b/net/minecraft/server/level/ServerPlayer.java
+index 3cd4e850f223100b61ac6831a87dd38f3a3bb58f..77631d741a0fe4d13444770887f6bc65f740886c 100644
+--- a/net/minecraft/server/level/ServerPlayer.java
++++ b/net/minecraft/server/level/ServerPlayer.java
+@@ -308,7 +308,11 @@ public class ServerPlayer extends Player implements ca.spottedleaf.moonrise.patc
+         // Paper start - Sync offhand slot in menus
+         @Override
+         public void sendOffHandSlotChange() {
+-            this.sendSlotChange(ServerPlayer.this.inventoryMenu, net.minecraft.world.inventory.InventoryMenu.SHIELD_SLOT, ServerPlayer.this.inventoryMenu.getSlot(net.minecraft.world.inventory.InventoryMenu.SHIELD_SLOT).getItem().copy());
++            // Nix start - use the same projected stack for offhand packet and remote state
++            final int slot = net.minecraft.world.inventory.InventoryMenu.SHIELD_SLOT;
++            ServerPlayer.this.inventoryMenu.setRemoteSlot(slot, ServerPlayer.this.inventoryMenu.getSlot(slot).getItem());
++            this.sendSlotChange(ServerPlayer.this.inventoryMenu, slot, ServerPlayer.this.inventoryMenu.getRemoteSlot(slot));
++            // Nix end - use the same projected stack for offhand packet and remote state
+         }
+         // Paper end - Sync offhand slot in menus
+ 
+@@ -333,7 +337,9 @@ public class ServerPlayer extends Player implements ca.spottedleaf.moonrise.patc
+ 
+         @Override
+         public RemoteSlot createSlot() {
+-            return new RemoteSlot.Synchronized(this.cache::getUnchecked);
++            // Nix start - keep remote state projection-aware for this viewer
++            return new RemoteSlot.Synchronized(this.cache::getUnchecked, ServerPlayer.this);
++            // Nix end - keep remote state projection-aware for this viewer
+         }
+     };
+     private final ContainerListener containerListener = new ContainerListener() {
+diff --git a/net/minecraft/server/network/ServerGamePacketListenerImpl.java b/net/minecraft/server/network/ServerGamePacketListenerImpl.java
+index c2aba28916da7f8b0bc8a325cddaa9bb7ecfb251..e9a9e84344270853906e2b27a49f6beadc81896b 100644
+--- a/net/minecraft/server/network/ServerGamePacketListenerImpl.java
++++ b/net/minecraft/server/network/ServerGamePacketListenerImpl.java
+@@ -2934,7 +2934,14 @@ public class ServerGamePacketListenerImpl
+                             if (target instanceof net.minecraft.world.entity.animal.allay.Allay || target instanceof net.minecraft.world.entity.animal.equine.AbstractHorse) { // Paper - Fix horse armor desync
+                                 ServerGamePacketListenerImpl.this.send(new net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket(
+                                     target.getId(), java.util.Arrays.stream(net.minecraft.world.entity.EquipmentSlot.values())
+-                                    .map((slot) -> com.mojang.datafixers.util.Pair.of(slot, ((LivingEntity) target).getItemBySlot(slot).copy()))
++                                    // Nix start - project corrective equipment for this viewer
++                                    .map((slot) -> com.mojang.datafixers.util.Pair.of(
++                                        slot,
++                                        club.plutoproject.nix.contentsystem.ContentSystemServices.current().project(
++                                            ((LivingEntity) target).getItemBySlot(slot).copy(), ServerGamePacketListenerImpl.this.player.getBukkitEntity()
++                                        )
++                                    ))
++                                    // Nix end - project corrective equipment for this viewer
+                                     .collect(Collectors.toList()), true)); // Paper - sanitize
+                                 player.containerMenu.sendAllDataToRemote();
+                             } else {
+@@ -3479,7 +3486,9 @@ public class ServerGamePacketListenerImpl
+         PacketUtils.ensureRunningOnSameThread(packet, this, this.player.level());
+         if (this.player.hasInfiniteMaterials()) {
+             boolean drop = packet.slotNum() < 0;
+-            ItemStack itemStack = packet.itemStack();
++            // Nix start - recover the complete projected creative stack before validation
++            ItemStack itemStack = club.plutoproject.nix.contentsystem.ContentSystemServices.current().recover(packet.itemStack());
++            // Nix end - recover the complete projected creative stack before validation
+             if (!itemStack.isItemEnabled(this.player.level().enabledFeatures())) {
+                 return;
+             }
+@@ -3516,7 +3525,10 @@ public class ServerGamePacketListenerImpl
+                     case DENY:
+                         // Reset the slot
+                         if (packet.slotNum() >= 0) {
+-                            this.player.connection.send(new net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket(this.player.inventoryMenu.containerId, this.player.inventoryMenu.incrementStateId(), packet.slotNum(), this.player.inventoryMenu.getSlot(packet.slotNum()).getItem()));
++                            // Nix start - resend the projection-aware rejected slot
++                            this.player.inventoryMenu.setRemoteSlot(packet.slotNum(), this.player.inventoryMenu.getSlot(packet.slotNum()).getItem());
++                            this.player.connection.send(new net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket(this.player.inventoryMenu.containerId, this.player.inventoryMenu.incrementStateId(), packet.slotNum(), this.player.inventoryMenu.getRemoteSlot(packet.slotNum())));
++                            // Nix end - resend the projection-aware rejected slot
+                             this.player.connection.send(new net.minecraft.network.protocol.game.ClientboundSetCursorItemPacket(ItemStack.EMPTY.copy())); // Paper - correctly set cursor
+                         }
+                         return;
+@@ -3525,7 +3537,9 @@ public class ServerGamePacketListenerImpl
+             // CraftBukkit end
+             if (validSlot && validData) {
+                 this.player.inventoryMenu.getSlot(packet.slotNum()).setByPlayer(itemStack);
++                // Nix start - record the runtime stack and its exact projected remote form
+                 this.player.inventoryMenu.setRemoteSlot(packet.slotNum(), itemStack);
++                // Nix end - record the runtime stack and its exact projected remote form
+                 this.player.inventoryMenu.broadcastChanges();
+                 if (io.papermc.paper.configuration.GlobalConfiguration.get().unsupportedSettings.updateEquipmentOnPlayerActions) this.player.detectEquipmentUpdates(); // Paper - Force update attributes.
+             } else if (drop && validData) {
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index fd010404e8071bb52271a2d42da3f1b1103ffb33..584417104735540c4cdf4671394c1e3e5eb01079 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -692,7 +692,11 @@ public abstract class Entity
+         List<SynchedEntityData.DataValue<?>> values = this.entityData.packAll(); // Paper - Update EVERYTHING not just not default
+ 
+         if (to.getBukkitEntity().canSee(this.getBukkitEntity())) { // Paper
+-            to.connection.send(new net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket(this.getId(), values));
++            // Nix start - project item-bearing entity data for this viewer
++            to.connection.send(new net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket(
++                this.getId(), net.minecraft.server.level.ServerEntity.projectEntityDataValues(values, to)
++            ));
++            // Nix end - project item-bearing entity data for this viewer
+         }
+     }
+     // CraftBukkit end
+@@ -725,7 +729,11 @@ public abstract class Entity
+             values.add(item.value());
+         }
+ 
+-        to.connection.send(new net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket(this.id, values));
++        // Nix start - project item-bearing entity data for this viewer
++        to.connection.send(new net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket(
++            this.id, net.minecraft.server.level.ServerEntity.projectEntityDataValues(values, to)
++        ));
++        // Nix end - project item-bearing entity data for this viewer
+     }
+     // Paper end
+ 
+diff --git a/net/minecraft/world/entity/LivingEntity.java b/net/minecraft/world/entity/LivingEntity.java
+index dd6e1bce99fe6d45d5fe09c5a1986d5be6f7cc81..b510440aeffc70bbcf5ce1bfcd80c601fe550f15 100644
+--- a/net/minecraft/world/entity/LivingEntity.java
++++ b/net/minecraft/world/entity/LivingEntity.java
+@@ -3661,7 +3661,13 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+             itemsToSend.add(Pair.of(slot, newItemToStore));
+             this.lastEquipmentItems.put(slot, newItemToStore);
+         });
+-        ((ServerLevel)this.level()).getChunkSource().sendToTrackingPlayers(this, new ClientboundSetEquipmentPacket(this.getId(), itemsToSend, true)); // Paper - data sanitization
++        // Nix start - let the tracker project equipment separately for each viewer
++        final ServerLevel serverLevel = (ServerLevel)this.level();
++        final net.minecraft.server.level.ChunkMap.TrackedEntity tracker = serverLevel.getChunkSource().chunkMap.entityMap.get(this.getId());
++        if (tracker != null) {
++            tracker.serverEntity.sendEquipmentChanges(itemsToSend, true);
++        }
++        // Nix end - let the tracker project equipment separately for each viewer
+     }
+ 
+     protected void tickHeadTurn(final float yBodyRotT) {
+diff --git a/net/minecraft/world/entity/Mob.java b/net/minecraft/world/entity/Mob.java
+index c2dd2da4bfb7d65ad2730ba1ce771e2b488beda4..1204556ef980ce0c4979965400b366fbfef74d45 100644
+--- a/net/minecraft/world/entity/Mob.java
++++ b/net/minecraft/world/entity/Mob.java
+@@ -1611,7 +1611,9 @@ public abstract class Mob extends LivingEntity implements Targeting, EquipmentUs
+         ItemStack weaponItem = this.getWeaponItem();
+         DamageSource damageSource = weaponItem.getDamageSource(this);
+         dmg = EnchantmentHelper.modifyDamage(level, weaponItem, target, damageSource, dmg);
+-        dmg += weaponItem.getItem().getAttackDamageBonus(target, dmg, damageSource);
++        // Nix start - pass the exact weapon stack and attacker to the enriched item hook
++        dmg += weaponItem.getItem().getAttackDamageBonus(weaponItem, this, target, dmg, damageSource);
++        // Nix end - pass the exact weapon stack and attacker to the enriched item hook
+         Vec3 oldMovement = target.getDeltaMovement();
+         boolean wasHurt = target.hurtServer(level, damageSource, dmg);
+         if (wasHurt) {
+diff --git a/net/minecraft/world/entity/item/ItemEntity.java b/net/minecraft/world/entity/item/ItemEntity.java
+index c800c894a921ae77ed1757794ddf8d737b05681e..5617649e85b2bae8bcbc9b5b344f516a0075d465 100644
+--- a/net/minecraft/world/entity/item/ItemEntity.java
++++ b/net/minecraft/world/entity/item/ItemEntity.java
+@@ -362,7 +362,9 @@ public class ItemEntity extends Entity implements TraceableEntity {
+         this.health = (int)(this.health - damage);
+         this.gameEvent(GameEvent.ENTITY_DAMAGE, source.getEntity());
+         if (this.health <= 0) {
+-            this.getItem().onDestroyed(this);
++            // Nix start - run the enriched item hook after uncancelled damage and before discard
++            this.getItem().onDestroyed(this, source);
++            // Nix end - run the enriched item hook after uncancelled damage and before discard
+             this.discard(org.bukkit.event.entity.EntityRemoveEvent.Cause.DEATH); // CraftBukkit - add Bukkit remove cause
+         }
+ 
+diff --git a/net/minecraft/world/entity/player/Inventory.java b/net/minecraft/world/entity/player/Inventory.java
+index cd7714dffcd7e7b6d96d18a97e65fd0914a739d1..f54b201ada749033dd4a08fc8a7d4aa286cdaf21 100644
+--- a/net/minecraft/world/entity/player/Inventory.java
++++ b/net/minecraft/world/entity/player/Inventory.java
+@@ -431,7 +431,19 @@ public class Inventory implements Container, Nameable {
+     }
+ 
+     public ClientboundSetPlayerInventoryPacket createInventoryUpdatePacket(final int slot) {
+-        return new ClientboundSetPlayerInventoryPacket(slot, this.getItem(slot).copy());
++        // Nix start - project the inventory update for its receiving player
++        ItemStack itemStack = this.getItem(slot).copy();
++        if (this.player instanceof ServerPlayer serverPlayer) {
++            final java.util.OptionalInt menuSlot = serverPlayer.containerMenu.findSlot(this, slot);
++            if (menuSlot.isPresent()) {
++                serverPlayer.containerMenu.setRemoteSlot(menuSlot.getAsInt(), this.getItem(slot));
++                itemStack = serverPlayer.containerMenu.getRemoteSlot(menuSlot.getAsInt());
++            } else {
++                itemStack = club.plutoproject.nix.contentsystem.ContentSystemServices.current().project(itemStack, serverPlayer.getBukkitEntity());
++            }
++        }
++        // Nix end - project the inventory update for its receiving player
++        return new ClientboundSetPlayerInventoryPacket(slot, itemStack);
+     }
+ 
+     @Override
+diff --git a/net/minecraft/world/entity/player/Player.java b/net/minecraft/world/entity/player/Player.java
+index 2a71a2fa949b3a7fb8ff2c44ec3a3d8636237142..8a4030ec658fc43483b734b8bd6f70c54fb81609 100644
+--- a/net/minecraft/world/entity/player/Player.java
++++ b/net/minecraft/world/entity/player/Player.java
+@@ -1048,7 +1048,9 @@ public abstract class Player extends Avatar implements ContainerUser {
+                         knockbackAttack = false;
+                     }
+ 
+-                    baseDamage += attackingItemStack.getItem().getAttackDamageBonus(entity, baseDamage, damageSource);
++                    // Nix start - pass the exact weapon stack and attacker to the enriched item hook
++                    baseDamage += attackingItemStack.getItem().getAttackDamageBonus(attackingItemStack, this, entity, baseDamage, damageSource);
++                    // Nix end - pass the exact weapon stack and attacker to the enriched item hook
+                     boolean criticalAttack = fullStrengthAttack && this.canCriticalAttack(entity);
+                     criticalAttack = criticalAttack && !this.level().paperConfig().entities.behavior.disablePlayerCrits; // Paper - Toggleable player crits
+                     if (criticalAttack) {
+diff --git a/net/minecraft/world/inventory/AbstractContainerMenu.java b/net/minecraft/world/inventory/AbstractContainerMenu.java
+index b37618125e85c1c6f284c7287202aae814c1ecfe..a7252ee3420589f8b07b82b75e85935501986df2 100644
+--- a/net/minecraft/world/inventory/AbstractContainerMenu.java
++++ b/net/minecraft/world/inventory/AbstractContainerMenu.java
+@@ -190,12 +190,17 @@ public abstract class AbstractContainerMenu {
+ 
+         for (int slotsSize = this.slots.size(); i < slotsSize; i++) {
+             ItemStack slotContents = this.slots.get(i).getItem();
+-            itemsToSend.add(slotContents.copy());
+             this.remoteSlots.get(i).force(slotContents);
++            // Nix start - send the exact projection recorded by remote state
++            itemsToSend.add(this.remoteSlots.get(i).remoteStack());
++            // Nix end - send the exact projection recorded by remote state
+         }
+ 
+         ItemStack carried = this.getCarried();
+         this.remoteCarried.force(carried);
++        // Nix start - share the projected cursor with the packet
++        carried = this.remoteCarried.remoteStack();
++        // Nix end - share the projected cursor with the packet
+         int ix = 0;
+ 
+         for (int slotsSize = this.dataSlots.size(); ix < slotsSize; ix++) {
+@@ -227,19 +232,28 @@ public abstract class AbstractContainerMenu {
+         this.remoteSlots.get(slotsIndex).force(item);
+ 
+         if (this.synchronizer != null) {
+-            this.synchronizer.sendSlotChange(this, slotsIndex, item.copy());
++            // Nix start - send the exact projection recorded by remote state
++            this.synchronizer.sendSlotChange(this, slotsIndex, this.remoteSlots.get(slotsIndex).remoteStack());
++            // Nix end - send the exact projection recorded by remote state
+         }
+     }
+     // Paper end
+ 
+     // CraftBukkit start - from synchronizeCarriedToRemote
+     public void broadcastCarriedItem() {
+-        ItemStack carried = this.getCarried();
++        // Nix start - project the cursor before sending it
++        this.sendProjectedCarriedChange(this.getCarried());
++        // Nix end - project the cursor before sending it
++    }
++
++    // Nix start - send the exact projected cursor recorded by remote state
++    private void sendProjectedCarriedChange(final ItemStack carried) {
+         this.remoteCarried.force(carried);
+         if (this.synchronizer != null) {
+-            this.synchronizer.sendCarriedChange(this, carried.copy());
++            this.synchronizer.sendCarriedChange(this, this.remoteCarried.remoteStack());
+         }
+     }
++    // Nix end - send the exact projected cursor recorded by remote state
+     // CraftBukkit end
+ 
+     public void removeSlotListener(final ContainerListener listener) {
+@@ -317,7 +331,9 @@ public abstract class AbstractContainerMenu {
+             if (!remoteExpected.matches(current)) {
+                 remoteExpected.force(current);
+                 if (this.synchronizer != null) {
+-                    this.synchronizer.sendSlotChange(this, i, currentCopy.get());
++                    // Nix start - send the exact projection recorded by remote state
++                    this.synchronizer.sendSlotChange(this, i, remoteExpected.remoteStack());
++                    // Nix end - send the exact projection recorded by remote state
+                 }
+             }
+         }
+@@ -339,10 +355,9 @@ public abstract class AbstractContainerMenu {
+         if (!this.suppressRemoteUpdates) {
+             ItemStack carriedItem = this.getCarried();
+             if (!this.remoteCarried.matches(carriedItem)) {
+-                this.remoteCarried.force(carriedItem);
+-                if (this.synchronizer != null) {
+-                    this.synchronizer.sendCarriedChange(this, carriedItem.copy());
+-                }
++                // Nix start - send the exact projected cursor recorded by remote state
++                this.sendProjectedCarriedChange(carriedItem);
++                // Nix end - send the exact projected cursor recorded by remote state
+             }
+         }
+     }
+@@ -351,6 +366,12 @@ public abstract class AbstractContainerMenu {
+         this.remoteSlots.get(slot).force(itemStack);
+     }
+ 
++    // Nix start - expose the exact projected stack for direct slot packets
++    public ItemStack getRemoteSlot(final int slot) {
++        return this.remoteSlots.get(slot).remoteStack();
++    }
++    // Nix end - expose the exact projected stack for direct slot packets
++
+     public void setRemoteSlotUnsafe(final int slot, final HashedStack itemStack) {
+         if (slot >= 0 && slot < this.remoteSlots.size()) {
+             this.remoteSlots.get(slot).receive(itemStack);
+@@ -569,11 +590,15 @@ public abstract class AbstractContainerMenu {
+                 slot.setChanged();
+                 // CraftBukkit start - Make sure the client has the right slot contents
+                 if (player instanceof ServerPlayer serverPlayer && slot.getMaxStackSize() != Container.MAX_STACK) {
+-                    serverPlayer.connection.send(new net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket(this.containerId, this.incrementStateId(), slot.index, slot.getItem()));
++                    // Nix start - use projection-aware remote state for corrective slot packets
++                    this.setRemoteSlot(slot.index, slot.getItem());
++                    serverPlayer.connection.send(new net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket(this.containerId, this.incrementStateId(), slot.index, this.getRemoteSlot(slot.index)));
+                     // Updating a crafting inventory makes the client reset the result slot, have to send it again
+                     if (this.getBukkitView().getType() == org.bukkit.event.inventory.InventoryType.WORKBENCH || this.getBukkitView().getType() == org.bukkit.event.inventory.InventoryType.CRAFTING) {
+-                        serverPlayer.connection.send(new net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket(this.containerId, this.incrementStateId(), 0, this.getSlot(0).getItem()));
++                        this.setRemoteSlot(0, this.getSlot(0).getItem());
++                        serverPlayer.connection.send(new net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket(this.containerId, this.incrementStateId(), 0, this.getRemoteSlot(0)));
+                     }
++                    // Nix end - use projection-aware remote state for corrective slot packets
+                 }
+                 // CraftBukkit end
+             }
+diff --git a/net/minecraft/world/inventory/CartographyTableMenu.java b/net/minecraft/world/inventory/CartographyTableMenu.java
+index bd4ce0c6417af6be4bebd171e24d62619b8fc9b6..fdefdaec8b2f056876183c80c64ea9af536f9fa6 100644
+--- a/net/minecraft/world/inventory/CartographyTableMenu.java
++++ b/net/minecraft/world/inventory/CartographyTableMenu.java
+@@ -99,7 +99,9 @@ public class CartographyTableMenu extends AbstractContainerMenu {
+             public void onTake(final Player player, final ItemStack carried) {
+                 CartographyTableMenu.this.slots.get(0).remove(1);
+                 CartographyTableMenu.this.slots.get(1).remove(1);
+-                carried.getItem().onCraftedBy(carried, player);
++                // Nix start - pass the exact player-crafted result amount
++                carried.getItem().onCraftedBy(carried, player, carried.getCount());
++                // Nix end - pass the exact player-crafted result amount
+                 access.execute((level, pos) -> {
+                     long gameTime = level.getGameTime();
+                     if (CartographyTableMenu.this.lastSoundTime != gameTime) {
+@@ -113,7 +115,9 @@ public class CartographyTableMenu extends AbstractContainerMenu {
+             @Override
+             public ItemStack safeClone(final Player player) {
+                 ItemStack result = super.safeClone(player);
+-                result.getItem().onCraftedBy(result, player);
++                // Nix start - pass the exact player-crafted result amount
++                result.getItem().onCraftedBy(result, player, result.getCount());
++                // Nix end - pass the exact player-crafted result amount
+                 return result;
+             }
+         });
+@@ -187,7 +191,9 @@ public class CartographyTableMenu extends AbstractContainerMenu {
+             ItemStack stack = slot.getItem();
+             clicked = stack.copy();
+             if (slotIndex == 2) {
+-                stack.getItem().onCraftedBy(stack, player);
++                // Nix start - pass the exact player-crafted result amount
++                stack.getItem().onCraftedBy(stack, player, stack.getCount());
++                // Nix end - pass the exact player-crafted result amount
+                 if (!this.moveItemStackTo(stack, 3, 39, true)) {
+                     return ItemStack.EMPTY;
+                 }
+diff --git a/net/minecraft/world/inventory/CraftingMenu.java b/net/minecraft/world/inventory/CraftingMenu.java
+index cca32d1798ee90ecec8bf72f629ab777def67f66..cc553513755a574d5f7137d2a2d0471e4e5746dc 100644
+--- a/net/minecraft/world/inventory/CraftingMenu.java
++++ b/net/minecraft/world/inventory/CraftingMenu.java
+@@ -95,8 +95,10 @@ public class CraftingMenu extends AbstractCraftingMenu {
+         result = org.bukkit.craftbukkit.event.CraftEventFactory.callPreCraftEvent(container, resultSlots, result, menu.getBukkitView(), maybeRecipe.map(RecipeHolder::value).orElse(null) instanceof net.minecraft.world.item.crafting.RepairItemRecipe); // CraftBukkit
+ 
+         resultSlots.setItem(0, result);
++        // Nix start - reuse the projection recorded for the result slot
+         menu.setRemoteSlot(0, result);
+-        serverPlayer.connection.send(new ClientboundContainerSetSlotPacket(menu.containerId, menu.incrementStateId(), 0, result));
++        serverPlayer.connection.send(new ClientboundContainerSetSlotPacket(menu.containerId, menu.incrementStateId(), 0, menu.getRemoteSlot(0)));
++        // Nix end - reuse the projection recorded for the result slot
+     }
+ 
+     @Override
+@@ -141,7 +143,9 @@ public class CraftingMenu extends AbstractCraftingMenu {
+             ItemStack stack = slot.getItem();
+             clicked = stack.copy();
+             if (slotIndex == 0) {
+-                stack.getItem().onCraftedBy(stack, player);
++                // Nix start - pass the exact player-crafted result amount
++                stack.getItem().onCraftedBy(stack, player, stack.getCount());
++                // Nix end - pass the exact player-crafted result amount
+                 if (!this.moveItemStackTo(stack, 10, 46, true)) {
+                     return ItemStack.EMPTY;
+                 }
+diff --git a/net/minecraft/world/inventory/RemoteSlot.java b/net/minecraft/world/inventory/RemoteSlot.java
+index 14146628c5b1a972317f9889ff6a45ab1f697f67..82c0f477db4ab86e50e0d93d0c221bbe8a8077aa 100644
+--- a/net/minecraft/world/inventory/RemoteSlot.java
++++ b/net/minecraft/world/inventory/RemoteSlot.java
+@@ -7,18 +7,32 @@ import org.jspecify.annotations.Nullable;
+ 
+ public interface RemoteSlot {
+     RemoteSlot PLACEHOLDER = new RemoteSlot() {
++        // Nix start - preserve placeholder remote output for direct packet callers
++        private ItemStack remote = ItemStack.EMPTY;
++        // Nix end - preserve placeholder remote output for direct packet callers
++
+         @Override
+         public void receive(final HashedStack incoming) {
+         }
+ 
+         @Override
+         public void force(final ItemStack outgoing) {
++            // Nix start - preserve placeholder remote output for direct packet callers
++            this.remote = outgoing.copy();
++            // Nix end - preserve placeholder remote output for direct packet callers
+         }
+ 
+         @Override
+         public boolean matches(final ItemStack local) {
+             return true;
+         }
++
++        // Nix start - preserve placeholder remote output for direct packet callers
++        @Override
++        public ItemStack remoteStack() {
++            return this.remote;
++        }
++        // Nix end - preserve placeholder remote output for direct packet callers
+     };
+ 
+     void force(ItemStack outgoing);
+@@ -27,29 +41,87 @@ public interface RemoteSlot {
+ 
+     boolean matches(ItemStack local);
+ 
++    // Nix start - expose the exact projected stack remembered by remote state
++    ItemStack remoteStack();
++    // Nix end - expose the exact projected stack remembered by remote state
++
+     class Synchronized implements RemoteSlot {
+         private final HashedPatchMap.HashGenerator hasher;
++        // Nix start - keep the viewer-specific canonical and projected snapshots
++        private final net.minecraft.server.level.@Nullable ServerPlayer viewer;
++        private final club.plutoproject.nix.contentsystem.@Nullable ContentSystemRemoteSlotState contentSystemState;
++        // Nix end - keep the viewer-specific canonical and projected snapshots
+         private @Nullable ItemStack remoteStack = null;
+         private @Nullable HashedStack remoteHash = null;
+ 
+         public Synchronized(final HashedPatchMap.HashGenerator hasher) {
++            // Nix start - retain the source-compatible non-viewer constructor
++            this(hasher, null);
++            // Nix end - retain the source-compatible non-viewer constructor
++        }
++
++        // Nix start - bind each remote slot to its receiving viewer
++        public Synchronized(final HashedPatchMap.HashGenerator hasher, final net.minecraft.server.level.@Nullable ServerPlayer viewer) {
+             this.hasher = hasher;
++            this.viewer = viewer;
++            this.contentSystemState = viewer == null ? null : new club.plutoproject.nix.contentsystem.ContentSystemRemoteSlotState();
+         }
++        // Nix end - bind each remote slot to its receiving viewer
+ 
+         @Override
+         public void force(final ItemStack outgoing) {
+-            this.remoteStack = outgoing.copy();
++            // Nix start - project and record one exact remote representation
++            if (this.contentSystemState != null && this.viewer != null) {
++                final club.plutoproject.nix.contentsystem.ContentSystemImpl service = club.plutoproject.nix.contentsystem.ContentSystemServices.current();
++                this.contentSystemState.acceptClientClaim(null);
++                this.contentSystemState.synchronize(
++                    outgoing,
++                    this.viewer.getBukkitEntity(),
++                    service.projectionRevision(this.viewer.getBukkitEntity()),
++                    service.projections()
++                );
++                this.remoteStack = this.contentSystemState.remoteStack();
++            } else {
++                this.remoteStack = outgoing.copy();
++            }
+             this.remoteHash = null;
++            // Nix end - project and record one exact remote representation
+         }
+ 
+         @Override
+         public void receive(final HashedStack incoming) {
+             this.remoteStack = null;
+-            this.remoteHash = incoming;
++            // Nix start - retain claims in the projection-aware state
++            if (this.contentSystemState != null) {
++                this.contentSystemState.acceptClientClaim(incoming);
++            } else {
++                this.remoteHash = incoming;
++            }
++            // Nix end - retain claims in the projection-aware state
+         }
+ 
+         @Override
+         public boolean matches(final ItemStack local) {
++            // Nix start - compare claims and runtime state against projection
++            if (this.contentSystemState != null && this.viewer != null) {
++                final club.plutoproject.nix.contentsystem.ContentSystemImpl service = club.plutoproject.nix.contentsystem.ContentSystemServices.current();
++                final club.plutoproject.nix.contentsystem.ContentSystemRemoteSlotState.ProjectionResult result = this.contentSystemState.synchronize(
++                    local,
++                    this.viewer.getBukkitEntity(),
++                    service.projectionRevision(this.viewer.getBukkitEntity()),
++                    service.projections()
++                );
++                this.remoteStack = this.contentSystemState.remoteStack();
++                if (this.contentSystemState.clientClaim() != null) {
++                    if (this.contentSystemState.clientClaimMatches(this.hasher)) {
++                        this.contentSystemState.promoteMatchingClaim(this.hasher);
++                        return true;
++                    }
++                    return false;
++                }
++                return !result.representationChanged();
++            }
++            // Nix end - compare claims and runtime state against projection
+             if (this.remoteStack != null) {
+                 return ItemStack.matches(this.remoteStack, local);
+             } else if (this.remoteHash != null && this.remoteHash.matches(local, this.hasher)) {
+@@ -60,9 +132,24 @@ public interface RemoteSlot {
+             }
+         }
+ 
++        // Nix start - return the exact projected remote snapshot
++        @Override
++        public ItemStack remoteStack() {
++            if (this.contentSystemState != null) {
++                return this.contentSystemState.remoteStack() == null ? ItemStack.EMPTY : this.contentSystemState.remoteStack();
++            }
++            return this.remoteStack == null ? ItemStack.EMPTY : this.remoteStack;
++        }
++        // Nix end - return the exact projected remote snapshot
++
+         public void copyFrom(final RemoteSlot.Synchronized other) {
+             this.remoteStack = other.remoteStack;
+             this.remoteHash = other.remoteHash;
++            // Nix start - preserve the projection-aware state during transfers
++            if (this.contentSystemState != null && other.contentSystemState != null) {
++                this.contentSystemState.copyFrom(other.contentSystemState);
++            }
++            // Nix end - preserve the projection-aware state during transfers
+         }
+     }
+ }
+diff --git a/net/minecraft/world/inventory/ResultSlot.java b/net/minecraft/world/inventory/ResultSlot.java
+index 830ecd77e312d4b7935e908ae20c2915aaada2d4..8ba930b96cd696159b35a8bb5e03308ede9505c3 100644
+--- a/net/minecraft/world/inventory/ResultSlot.java
++++ b/net/minecraft/world/inventory/ResultSlot.java
+@@ -54,7 +54,9 @@ public class ResultSlot extends Slot {
+     @Override
+     public ItemStack safeClone(final Player player) {
+         ItemStack result = super.safeClone(player);
+-        result.getItem().onCraftedBy(result, player);
++        // Nix start - pass the exact player-crafted result amount
++        result.getItem().onCraftedBy(result, player, result.getCount());
++        // Nix end - pass the exact player-crafted result amount
+         return result;
+     }
+ 
+diff --git a/net/minecraft/world/inventory/ShulkerBoxSlot.java b/net/minecraft/world/inventory/ShulkerBoxSlot.java
+index 0f402f403b06e44bcd9c7060c56ae61f8c82da3b..d1c4e51b628d687b0eb1f548b1ca9215ccf7e983 100644
+--- a/net/minecraft/world/inventory/ShulkerBoxSlot.java
++++ b/net/minecraft/world/inventory/ShulkerBoxSlot.java
+@@ -10,6 +10,8 @@ public class ShulkerBoxSlot extends Slot {
+ 
+     @Override
+     public boolean mayPlace(final ItemStack itemStack) {
+-        return itemStack.getItem().canFitInsideContainerItems();
++        // Nix start - pass the queried stack to the enriched container-fit hook
++        return itemStack.getItem().canFitInsideContainerItems(itemStack);
++        // Nix end - pass the queried stack to the enriched container-fit hook
+     }
+ }
+diff --git a/net/minecraft/world/inventory/StonecutterMenu.java b/net/minecraft/world/inventory/StonecutterMenu.java
+index 08f9ebba4a308b4592a4ae8c7ced3ec53911b918..d284d4a3b5f9a227dd93987813ef57cef68a7a91 100644
+--- a/net/minecraft/world/inventory/StonecutterMenu.java
++++ b/net/minecraft/world/inventory/StonecutterMenu.java
+@@ -239,7 +239,9 @@ public class StonecutterMenu extends AbstractContainerMenu {
+             Item item = stack.getItem();
+             clicked = stack.copy();
+             if (slotIndex == 1) {
+-                item.onCraftedBy(stack, player);
++                // Nix start - pass the exact player-crafted result amount
++                item.onCraftedBy(stack, player, stack.getCount());
++                // Nix end - pass the exact player-crafted result amount
+                 if (!this.moveItemStackTo(stack, 2, 38, true)) {
+                     return ItemStack.EMPTY;
+                 }
+diff --git a/net/minecraft/world/item/Item.java b/net/minecraft/world/item/Item.java
+index a6a5800f8c13977cedafc0cce95aed3a05306230..ad54ffbe0191911586a4f709eb46ee5cd9e03e21 100644
+--- a/net/minecraft/world/item/Item.java
++++ b/net/minecraft/world/item/Item.java
+@@ -167,6 +167,12 @@ public class Item implements ItemLike, FeatureElement {
+     public void onDestroyed(final ItemEntity itemEntity) {
+     }
+ 
++    // Nix start - enrich dropped-item destruction with its damage source
++    public void onDestroyed(final ItemEntity itemEntity, final DamageSource damageSource) {
++        this.onDestroyed(itemEntity);
++    }
++    // Nix end - enrich dropped-item destruction with its damage source
++
+     public boolean canDestroyBlock(final ItemStack itemStack, final BlockState state, final Level level, final BlockPos pos, final LivingEntity user) {
+         Tool tool = itemStack.get(DataComponents.TOOL);
+         return tool == null || tool.canDestroyBlocksInCreative() || !(user instanceof Player player && player.getAbilities().instabuild);
+@@ -244,6 +250,14 @@ public class Item implements ItemLike, FeatureElement {
+         return 0.0F;
+     }
+ 
++    // Nix start - enrich attack damage bonus with stack and attacker context
++    public float getAttackDamageBonus(
++        final ItemStack weapon, final LivingEntity attacker, final Entity victim, final float damage, final DamageSource damageSource
++    ) {
++        return this.getAttackDamageBonus(victim, damage, damageSource);
++    }
++    // Nix end - enrich attack damage bonus with stack and attacker context
++
+     @Deprecated
+     public @Nullable DamageSource getItemDamageSource(final LivingEntity attacker) {
+         return null;
+@@ -293,9 +307,21 @@ public class Item implements ItemLike, FeatureElement {
+         this.onCraftedPostProcess(itemStack, player.level());
+     }
+ 
++    // Nix start - preserve the crafted amount through the item virtual call
++    public void onCraftedBy(final ItemStack itemStack, final Player player, final int craftedAmount) {
++        this.onCraftedBy(itemStack, player);
++    }
++    // Nix end - preserve the crafted amount through the item virtual call
++
+     public void onCraftedPostProcess(final ItemStack itemStack, final Level level) {
+     }
+ 
++    // Nix start - preserve the automated crafted amount through the item virtual call
++    public void onCraftedPostProcess(final ItemStack itemStack, final Level level, final int craftedAmount) {
++        this.onCraftedPostProcess(itemStack, level);
++    }
++    // Nix end - preserve the automated crafted amount through the item virtual call
++
+     public ItemUseAnimation getUseAnimation(final ItemStack itemStack) {
+         Consumable consumable = itemStack.get(DataComponents.CONSUMABLE);
+         if (consumable != null) {
+@@ -365,6 +391,12 @@ public class Item implements ItemLike, FeatureElement {
+         return true;
+     }
+ 
++    // Nix start - enrich container-fit checks with the queried stack
++    public boolean canFitInsideContainerItems(final ItemStack itemStack) {
++        return this.canFitInsideContainerItems();
++    }
++    // Nix end - enrich container-fit checks with the queried stack
++
+     @Override
+     public final FeatureFlagSet requiredFeatures() {
+         return this.requiredFeatures;
+diff --git a/net/minecraft/world/item/ItemStack.java b/net/minecraft/world/item/ItemStack.java
+index 44a7590558fa73fb570f76ba7a4e7db1415d08f7..7cc3f3d5c3e0d0e18f1149583c56c8317b971c68 100644
+--- a/net/minecraft/world/item/ItemStack.java
++++ b/net/minecraft/world/item/ItemStack.java
+@@ -111,11 +111,15 @@ public final class ItemStack implements DataComponentHolder, ItemInstance {
+         "ItemStack",
+         subCodec -> RecordCodecBuilder.mapCodec(
+             i -> i.group(
+-                    Item.CODEC_WITH_BOUND_COMPONENTS.fieldOf("id").forGetter(ItemStack::typeHolder),
+-                    ExtraCodecs.optionalAlwaysPresentFieldOf(ExtraCodecs.intRange(1, 99), "count", 1).forGetter(ItemStack::getCount),
+-                    DataComponentPatch.CODEC.optionalFieldOf("components", DataComponentPatch.EMPTY).forGetter(s -> s.components.asPatch())
++                    // Nix start - encode only the vanilla-loadable persistent form
++                    Item.CODEC_WITH_BOUND_COMPONENTS.fieldOf("id").forGetter(ItemStack::persistentTypeHolder),
++                    ExtraCodecs.optionalAlwaysPresentFieldOf(ExtraCodecs.intRange(1, 99), "count", 1).forGetter(ItemStack::persistentCount),
++                    DataComponentPatch.CODEC.optionalFieldOf("components", DataComponentPatch.EMPTY).forGetter(ItemStack::persistentComponents)
++                    // Nix end - encode only the vanilla-loadable persistent form
+                 )
+-                .apply(i, ItemStack::new)
++                // Nix start - recover the runtime item after vanilla codec decoding
++                .apply(i, ItemStack::fromPersistentCodec)
++                // Nix end - recover the runtime item after vanilla codec decoding
+         )
+     );
+     public static final Codec<ItemStack> CODEC = Codec.lazyInitialized(MAP_CODEC::codec);
+@@ -186,16 +190,19 @@ public final class ItemStack implements DataComponentHolder, ItemInstance {
+ 
+             @Override
+             public void encode(final RegistryFriendlyByteBuf output, final ItemStack itemStack) {
+-                if (itemStack.isEmpty()) {
++                // Nix start - project each network stack for its receiving player
++                final ItemStack encodedStack = itemStack.networkForm();
++                // Nix end - project each network stack for its receiving player
++                if (encodedStack.isEmpty()) {
+                     output.writeVarInt(0);
+                 } else {
+-                    output.writeVarInt(io.papermc.paper.util.sanitizer.ItemComponentSanitizer.sanitizeCount(io.papermc.paper.util.sanitizer.ItemObfuscationSession.currentSession(), itemStack, itemStack.getCount())); // Paper - potentially sanitize count
+-                    Item.STREAM_CODEC.encode(output, itemStack.typeHolder());
++                    output.writeVarInt(io.papermc.paper.util.sanitizer.ItemComponentSanitizer.sanitizeCount(io.papermc.paper.util.sanitizer.ItemObfuscationSession.currentSession(), encodedStack, encodedStack.getCount())); // Paper - potentially sanitize count
++                    Item.STREAM_CODEC.encode(output, encodedStack.typeHolder());
+                     // Paper start - adventure; conditionally render translatable components
+                     boolean prev = net.minecraft.network.chat.ComponentSerialization.DONT_RENDER_TRANSLATABLES.get();
+-                    try (final io.papermc.paper.util.SafeAutoClosable ignored = io.papermc.paper.util.sanitizer.ItemObfuscationSession.withContext(c -> c.itemStack(itemStack))) { // pass the itemstack as context to the obfuscation session
++                    try (final io.papermc.paper.util.SafeAutoClosable ignored = io.papermc.paper.util.sanitizer.ItemObfuscationSession.withContext(c -> c.itemStack(encodedStack))) { // pass the itemstack as context to the obfuscation session
+                         net.minecraft.network.chat.ComponentSerialization.DONT_RENDER_TRANSLATABLES.set(true);
+-                    patchCodec.encode(output, itemStack.components.asPatch());
++                    patchCodec.encode(output, encodedStack.components.asPatch());
+                     } finally {
+                         net.minecraft.network.chat.ComponentSerialization.DONT_RENDER_TRANSLATABLES.set(prev);
+                     }
+@@ -281,6 +288,54 @@ public final class ItemStack implements DataComponentHolder, ItemInstance {
+         this.components = new PatchedDataComponentMap(DataComponentMap.EMPTY);
+     }
+ 
++    // Nix start - bridge ordinary ItemStack codec persistence and recovery
++    private static Holder<Item> persistentTypeHolder(final ItemStack itemStack) {
++        return club.plutoproject.nix.contentsystem.ContentSystemServices.current().persistentForm(itemStack).typeHolder();
++    }
++
++    private static int persistentCount(final ItemStack itemStack) {
++        return club.plutoproject.nix.contentsystem.ContentSystemServices.current().persistentForm(itemStack).getCount();
++    }
++
++    private static DataComponentPatch persistentComponents(final ItemStack itemStack) {
++        return club.plutoproject.nix.contentsystem.ContentSystemServices.current().persistentForm(itemStack).getComponentsPatch();
++    }
++
++    private static ItemStack fromPersistentCodec(final Holder<Item> item, final int count, final DataComponentPatch components) {
++        return club.plutoproject.nix.contentsystem.ContentSystemServices.current().recover(new ItemStack(item, count, components));
++    }
++    // Nix end - bridge ordinary ItemStack codec persistence and recovery
++
++    // Nix start - keep custom component types out of vanilla network streams
++    private ItemStack networkForm() {
++        final org.bukkit.entity.Player viewer = club.plutoproject.nix.contentsystem.ContentSystemServices.networkProjectionViewer();
++        if (viewer != null) {
++            if (this.getItem() instanceof club.plutoproject.nix.contentsystem.ContentSystemItem || hasContentSystemComponent(this)) {
++                return club.plutoproject.nix.contentsystem.ContentSystemServices.current().project(this, viewer);
++            }
++            return this;
++        }
++        if (this.getItem() instanceof club.plutoproject.nix.contentsystem.ContentSystemItem || hasContentSystemComponent(this)) {
++            throw new IllegalStateException("A Content System item must be projected before network encoding");
++        }
++        return this;
++    }
++
++    private static boolean hasContentSystemComponent(final ItemStack itemStack) {
++        for (final DataComponentType<?> type : itemStack.getComponents().keySet()) {
++            if (type instanceof club.plutoproject.nix.contentsystem.ContentSystemDataComponentType<?>) {
++                return true;
++            }
++        }
++        for (final java.util.Map.Entry<DataComponentType<?>, Optional<?>> entry : itemStack.getComponentsPatch().entrySet()) {
++            if (entry.getKey() instanceof club.plutoproject.nix.contentsystem.ContentSystemDataComponentType<?>) {
++                return true;
++            }
++        }
++        return false;
++    }
++    // Nix end - keep custom component types out of vanilla network streams
++
+     private static DataResult<?> validateComponents(final DataComponentMap components) {
+         if (components.has(DataComponents.MAX_DAMAGE) && components.getOrDefault(DataComponents.MAX_STACK_SIZE, 1) > 1) {
+             return DataResult.error(() -> "Item cannot be both damageable and stackable");
+@@ -921,12 +976,20 @@ public final class ItemStack implements DataComponentHolder, ItemInstance {
+ 
+     public void onCraftedBy(final Player player, final int craftCount) {
+         player.awardStat(Stats.ITEM_CRAFTED.get(this.getItem()), craftCount);
+-        this.getItem().onCraftedBy(this, player);
++        // Nix start - preserve the exact player crafting amount
++        this.getItem().onCraftedBy(this, player, craftCount);
++        // Nix end - preserve the exact player crafting amount
+     }
+ 
+     public void onCraftedBySystem(final Level level) {
+-        this.getItem().onCraftedPostProcess(this, level);
++        this.onCraftedBySystem(level, 1);
++    }
++
++    // Nix start - preserve the exact automated crafting amount
++    public void onCraftedBySystem(final Level level, final int craftCount) {
++        this.getItem().onCraftedPostProcess(this, level, craftCount);
+     }
++    // Nix end - preserve the exact automated crafting amount
+ 
+     public int getUseDuration(final LivingEntity user) {
+         return this.getItem().getUseDuration(this, user);
+@@ -1350,6 +1413,12 @@ public final class ItemStack implements DataComponentHolder, ItemInstance {
+         this.getItem().onDestroyed(itemEntity);
+     }
+ 
++    // Nix start - preserve the damage source through item destruction
++    public void onDestroyed(final ItemEntity itemEntity, final DamageSource damageSource) {
++        this.getItem().onDestroyed(itemEntity, damageSource);
++    }
++    // Nix end - preserve the damage source through item destruction
++
+     public boolean canBeHurtBy(final DamageSource source) {
+         DamageResistant damageResistant = this.get(DataComponents.DAMAGE_RESISTANT);
+         return damageResistant == null || !damageResistant.isResistantTo(source);
+diff --git a/net/minecraft/world/item/ItemStackTemplate.java b/net/minecraft/world/item/ItemStackTemplate.java
+index ccfbb57acd405c6a3f26eb520930c8d83155f9dd..64b8556d881012c22f30c7e36576f061ba796510 100644
+--- a/net/minecraft/world/item/ItemStackTemplate.java
++++ b/net/minecraft/world/item/ItemStackTemplate.java
+@@ -20,14 +20,19 @@ public record ItemStackTemplate(Holder<Item> item, @Override int count, DataComp
+     private static final Logger LOGGER = LogUtils.getLogger();
+     public static final MapCodec<ItemStackTemplate> MAP_CODEC = RecordCodecBuilder.mapCodec(
+         i -> i.group(
+-                Item.CODEC.fieldOf("id").forGetter(ItemStackTemplate::item),
+-                ExtraCodecs.intRange(1, 99).optionalFieldOf("count", 1).forGetter(ItemStackTemplate::count),
+-                DataComponentPatch.CODEC.optionalFieldOf("components", DataComponentPatch.EMPTY).forGetter(ItemStackTemplate::components)
++                // Nix start - encode only the vanilla-loadable persistent template form
++                Item.CODEC.fieldOf("id").forGetter(template -> ItemStackTemplate.persistentForm(template).item()),
++                ExtraCodecs.intRange(1, 99).optionalFieldOf("count", 1).forGetter(template -> ItemStackTemplate.persistentForm(template).count()),
++                DataComponentPatch.CODEC.optionalFieldOf("components", DataComponentPatch.EMPTY).forGetter(template -> ItemStackTemplate.persistentForm(template).components())
++                // Nix end - encode only the vanilla-loadable persistent template form
+             )
+-            .apply(i, ItemStackTemplate::new)
++            // Nix start - recover the runtime template after vanilla codec decoding
++            .apply(i, ItemStackTemplate::fromPersistentCodec)
++            // Nix end - recover the runtime template after vanilla codec decoding
+     );
+     public static final Codec<ItemStackTemplate> CODEC = Codec.withAlternative(MAP_CODEC.codec(), Item.CODEC, item -> new ItemStackTemplate(item.value()));
+-    public static final StreamCodec<RegistryFriendlyByteBuf, ItemStackTemplate> STREAM_CODEC = StreamCodec.composite(
++    // Nix start - project nested templates at the network boundary
++    private static final StreamCodec<RegistryFriendlyByteBuf, ItemStackTemplate> RAW_STREAM_CODEC = StreamCodec.composite(
+         Item.STREAM_CODEC,
+         ItemStackTemplate::item,
+         ByteBufCodecs.VAR_INT,
+@@ -37,6 +42,12 @@ public record ItemStackTemplate(Holder<Item> item, @Override int count, DataComp
+         ItemStackTemplate::new
+     );
+ 
++    public static final StreamCodec<RegistryFriendlyByteBuf, ItemStackTemplate> STREAM_CODEC = StreamCodec.of(
++        (output, template) -> RAW_STREAM_CODEC.encode(output, ItemStackTemplate.networkForm(template)),
++        RAW_STREAM_CODEC::decode
++    );
++    // Nix end - project nested templates at the network boundary
++
+     public ItemStackTemplate(final Item item) {
+         this(item.builtInRegistryHolder(), 1, DataComponentPatch.EMPTY);
+     }
+@@ -59,6 +70,69 @@ public record ItemStackTemplate(Holder<Item> item, @Override int count, DataComp
+         }
+     }
+ 
++    // Nix start - bridge template persistence and viewer-aware network projection
++    private static ItemStackTemplate persistentForm(final ItemStackTemplate template) {
++        if (!template.item().areComponentsBound()) {
++            return template;
++        }
++        final ItemStack persistent = club.plutoproject.nix.contentsystem.ContentSystemServices.current().persistentForm(
++            new ItemStack(template.item(), template.count(), template.components())
++        );
++        return new ItemStackTemplate(persistent.typeHolder(), persistent.getCount(), persistent.getComponentsPatch());
++    }
++
++    private static ItemStackTemplate fromPersistentCodec(final Holder<Item> item, final int count, final DataComponentPatch components) {
++        if (!item.areComponentsBound()) {
++            return new ItemStackTemplate(item, count, components);
++        }
++        final ItemStack recovered = club.plutoproject.nix.contentsystem.ContentSystemServices.current().recover(new ItemStack(item, count, components));
++        return new ItemStackTemplate(recovered.typeHolder(), recovered.getCount(), recovered.getComponentsPatch());
++    }
++
++    private static ItemStackTemplate networkForm(final ItemStackTemplate template) {
++        if (!template.item().areComponentsBound()) {
++            return template;
++        }
++        final org.bukkit.entity.Player viewer = club.plutoproject.nix.contentsystem.ContentSystemServices.networkProjectionViewer();
++        final ItemStack stack = new ItemStack(template.item(), template.count(), template.components());
++        if (viewer != null) {
++            if (stack.getItem() instanceof club.plutoproject.nix.contentsystem.ContentSystemItem || hasContentSystemComponent(stack)) {
++                final ItemStack projected = club.plutoproject.nix.contentsystem.ContentSystemServices.current().project(stack, viewer);
++                return new ItemStackTemplate(projected.typeHolder(), projected.getCount(), projected.getComponentsPatch());
++            }
++            return template;
++        }
++        for (final net.minecraft.core.component.DataComponentType<?> type : stack.getComponents().keySet()) {
++            if (type instanceof club.plutoproject.nix.contentsystem.ContentSystemDataComponentType<?>) {
++                throw new IllegalStateException("A Content System template must be projected before network encoding");
++            }
++        }
++        for (final java.util.Map.Entry<net.minecraft.core.component.DataComponentType<?>, java.util.Optional<?>> entry : stack.getComponentsPatch().entrySet()) {
++            if (entry.getKey() instanceof club.plutoproject.nix.contentsystem.ContentSystemDataComponentType<?>) {
++                throw new IllegalStateException("A Content System template must be projected before network encoding");
++            }
++        }
++        if (stack.getItem() instanceof club.plutoproject.nix.contentsystem.ContentSystemItem) {
++            throw new IllegalStateException("A Content System template must be projected before network encoding");
++        }
++        return template;
++    }
++
++    private static boolean hasContentSystemComponent(final ItemStack stack) {
++        for (final net.minecraft.core.component.DataComponentType<?> type : stack.getComponents().keySet()) {
++            if (type instanceof club.plutoproject.nix.contentsystem.ContentSystemDataComponentType<?>) {
++                return true;
++            }
++        }
++        for (final java.util.Map.Entry<net.minecraft.core.component.DataComponentType<?>, java.util.Optional<?>> entry : stack.getComponentsPatch().entrySet()) {
++            if (entry.getKey() instanceof club.plutoproject.nix.contentsystem.ContentSystemDataComponentType<?>) {
++                return true;
++            }
++        }
++        return false;
++    }
++    // Nix end - bridge template persistence and viewer-aware network projection
++
+     public static ItemStackTemplate fromNonEmptyStack(final ItemStack itemStack) {
+         if (itemStack.isEmpty()) {
+             throw new IllegalStateException("Stack must be non-empty");
+@@ -76,8 +150,17 @@ public record ItemStackTemplate(Holder<Item> item, @Override int count, DataComp
+     }
+ 
+     public ItemStack create() {
+-        return this.validate(new ItemStack(this.item, this.count, this.components));
++        return this.validate(recoverIfNeeded(new ItemStack(this.item, this.count, this.components)));
++    }
++
++    // Nix start - recover a template envelope when it becomes a runtime stack
++    private static ItemStack recoverIfNeeded(final ItemStack result) {
++        final net.minecraft.world.item.component.CustomData customData = result.get(net.minecraft.core.component.DataComponents.CUSTOM_DATA);
++        return customData != null && customData.contains("nix:item")
++            ? club.plutoproject.nix.contentsystem.ContentSystemServices.current().recover(result)
++            : result;
+     }
++    // Nix end - recover a template envelope when it becomes a runtime stack
+ 
+     private ItemStack validate(final ItemStack result) {
+         Optional<Error<ItemStack>> error = ItemStack.validateStrict(result).error();
+@@ -96,6 +179,9 @@ public record ItemStackTemplate(Holder<Item> item, @Override int count, DataComp
+     public ItemStack apply(final int count, final DataComponentPatch additionalPatch) {
+         ItemStack result = new ItemStack(this.item, count, additionalPatch);
+         result.applyComponents(this.components);
++        // Nix start - recover a template envelope after applying its patch
++        result = recoverIfNeeded(result);
++        // Nix end - recover a template envelope after applying its patch
+         return this.validate(result);
+     }
+ 
+diff --git a/net/minecraft/world/item/component/BundleContents.java b/net/minecraft/world/item/component/BundleContents.java
+index 8d925a64f21c1599ea558256b0efd93e99d95fac..5bbb282406ebb473202eb61a5be98c2f7ebae7b3 100644
+--- a/net/minecraft/world/item/component/BundleContents.java
++++ b/net/minecraft/world/item/component/BundleContents.java
+@@ -53,6 +53,20 @@ public final class BundleContents implements TooltipComponent {
+         this(items, NO_SELECTED_ITEM_INDEX);
+     }
+ 
++    // Nix start - preserve nested item projection without losing bundle selection
++    public BundleContents mapItems(final java.util.function.UnaryOperator<ItemStackTemplate> mapper) {
++        java.util.Objects.requireNonNull(mapper, "mapper");
++        List<ItemStackTemplate> mapped = new ArrayList<>(this.items.size());
++        boolean changed = false;
++        for (final ItemStackTemplate item : this.items) {
++            final ItemStackTemplate replacement = mapper.apply(item);
++            mapped.add(replacement);
++            changed |= replacement != item && !replacement.equals(item);
++        }
++        return changed ? new BundleContents(mapped, this.selectedItem) : this;
++    }
++    // Nix end - preserve nested item projection without losing bundle selection
++
+     private static DataResult<Fraction> computeContentWeight(final List<? extends ItemInstance> items) {
+         try {
+             Fraction weight = Fraction.ZERO;
+@@ -83,7 +97,9 @@ public final class BundleContents implements TooltipComponent {
+     }
+ 
+     public static boolean canItemBeInBundle(final ItemStack itemToAdd) {
+-        return !itemToAdd.isEmpty() && itemToAdd.getItem().canFitInsideContainerItems();
++        // Nix start - pass the queried stack to the enriched container-fit hook
++        return !itemToAdd.isEmpty() && itemToAdd.getItem().canFitInsideContainerItems(itemToAdd);
++        // Nix end - pass the queried stack to the enriched container-fit hook
+     }
+ 
+     // Paper start - correct bundle inventory action
+diff --git a/net/minecraft/world/item/component/ChargedProjectiles.java b/net/minecraft/world/item/component/ChargedProjectiles.java
+index 86acd69568b89b6f080d4326df0991fd9c78eb40..b4e1d0da00637b16bafa78cbed7f4d2f02389ca6 100644
+--- a/net/minecraft/world/item/component/ChargedProjectiles.java
++++ b/net/minecraft/world/item/component/ChargedProjectiles.java
+@@ -40,6 +40,20 @@ public record ChargedProjectiles(List<ItemStackTemplate> items) implements Toolt
+         return new ChargedProjectiles(List.of(stack));
+     }
+ 
++    // Nix start - project nested charged item templates at the network boundary
++    public ChargedProjectiles mapItems(final java.util.function.UnaryOperator<ItemStackTemplate> mapper) {
++        java.util.Objects.requireNonNull(mapper, "mapper");
++        final java.util.List<ItemStackTemplate> mapped = new java.util.ArrayList<>(this.items.size());
++        boolean changed = false;
++        for (final ItemStackTemplate item : this.items) {
++            final ItemStackTemplate replacement = mapper.apply(item);
++            mapped.add(replacement);
++            changed |= replacement != item && !replacement.equals(item);
++        }
++        return changed ? new ChargedProjectiles(mapped) : this;
++    }
++    // Nix end - project nested charged item templates at the network boundary
++
+     public static ChargedProjectiles ofNonEmpty(final List<ItemStack> items) {
+         List<ItemStackTemplate> list = items.stream().filter(i -> !i.isEmpty()).map(ItemStackTemplate::fromStack).limit(1024L).toList();
+         if (list.size() != items.size()) {
+diff --git a/net/minecraft/world/item/component/ItemContainerContents.java b/net/minecraft/world/item/component/ItemContainerContents.java
+index 54f4d44e9cf02c33cb10349c929bb32f89597011..b90ad8d370729af2bed0d3a9737b2d4d474bcfdb 100644
+--- a/net/minecraft/world/item/component/ItemContainerContents.java
++++ b/net/minecraft/world/item/component/ItemContainerContents.java
+@@ -64,6 +64,20 @@ public final class ItemContainerContents implements TooltipProvider {
+         return new ItemContainerContents(items);
+     }
+ 
++    // Nix start - preserve nested item projection while retaining container slots
++    public ItemContainerContents mapItems(final java.util.function.UnaryOperator<ItemStackTemplate> mapper) {
++        java.util.Objects.requireNonNull(mapper, "mapper");
++        List<Optional<ItemStackTemplate>> mapped = new ArrayList<>(this.items.size());
++        boolean changed = false;
++        for (final Optional<ItemStackTemplate> item : this.items) {
++            final Optional<ItemStackTemplate> replacement = item.map(mapper);
++            mapped.add(replacement);
++            changed |= !replacement.equals(item);
++        }
++        return changed ? new ItemContainerContents(mapped) : this;
++    }
++    // Nix end - preserve nested item projection while retaining container slots
++
+     public static ItemContainerContents fromItems(final List<ItemStack> itemStacks) {
+         int lastNonEmptySlot = findLastNonEmptySlot(itemStacks);
+         if (lastNonEmptySlot == NO_SLOT) {
+diff --git a/net/minecraft/world/level/block/CrafterBlock.java b/net/minecraft/world/level/block/CrafterBlock.java
+index f0756f3d277103f95e4d5213b5ae788025b72f42..0acf07d46309c4fcfcf126040d8dd2ddada63442 100644
+--- a/net/minecraft/world/level/block/CrafterBlock.java
++++ b/net/minecraft/world/level/block/CrafterBlock.java
+@@ -168,7 +168,9 @@ public class CrafterBlock extends BaseEntityBlock {
+                 } else {
+                     blockEntity.setCraftingTicksRemaining(6);
+                     level.setBlock(pos, state.setValue(CRAFTING, true), Block.UPDATE_CLIENTS);
+-                    results.onCraftedBySystem(level);
++                    // Nix start - pass the full automated crafting result amount
++                    results.onCraftedBySystem(level, results.getCount());
++                    // Nix end - pass the full automated crafting result amount
+                     this.dispenseItem(level, pos, blockEntity, results, state, pickedRecipe);
+ 
+                     for (ItemStack remainingItem : pickedRecipe.value().getRemainingItems(var11)) {
