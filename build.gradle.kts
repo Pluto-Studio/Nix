@@ -71,7 +71,7 @@ subprojects {
     extensions.configure<PublishingExtension> {
         repositories {
             maven(nostalMavenSnapshotUrl) {
-                name = "nix"
+                name = "nostalMaven"
                 credentials(PasswordCredentials::class)
             }
         }
