@@ -1,16 +1,16 @@
 ---
 name: sync-paper-upstream
-description: Sync a Nix Paperweight fork to Paper's latest commit. Use when the user asks to update the pinned Paper revision, apply upstream patches, resolve resulting conflicts, or rebuild patches after an upstream sync.
-compatibility: Nix repository using Paperweight 2.x and the generated-worktree patch workflow documented in AGENTS.md.
+description: Sync this fork to Paper's latest commit.
+disable-model-invocation: true
 ---
 
-# Sync Paper Upstream
+# Sync Paper upstream
 
-Treat the pinned Paper revision and tracked patches as durable state; generated worktrees are the conflict-resolution interface.
+Update the pinned Paper revision, reapply the Nix patches, resolve conflicts in generated worktrees, rebuild the tracked patches, then audit and push the result.
 
-## 1. Preflight
+## 1. Check the starting state
 
-Read the repository's `AGENTS.md`, then inspect the outer repository and every existing generated worktree:
+Read `AGENTS.md`. Then inspect the outer repository and every existing generated worktree:
 
 ```bash
 git status --short --branch
@@ -19,73 +19,77 @@ for d in paper-server paper-api nix-server/src/minecraft/java nix-server/src/min
 done
 ```
 
-Stop and ask before overwriting unrelated changes. Identify the pin and upstream repository from the build configuration. Resolve Paper's current default-branch commit from the remote, normally:
+Stop before overwriting unrelated local changes. Find the pinned Paper revision and upstream repository in the build configuration. Resolve the current commit on Paper's default branch, normally with:
 
 ```bash
 git ls-remote https://github.com/PaperMC/Paper.git refs/heads/main
 ```
 
-Completion criterion: the starting state is safe and both old and target revisions are known.
+Proceed only when the starting state is safe and both the old and target revisions are known.
 
-## 2. Move the Pin and Apply
+## 2. Update the pin and apply patches
 
-Update only the Paper commit property, then run:
+Change only the Paper commit property. Then run:
 
 ```bash
 ./gradlew applyAllPatches
 ```
 
-A Git fetch exit code is a fetch failure, not a patch conflict; report its actual cause or retry after connectivity is restored.
+A failed Git fetch is a fetch failure, not a patch conflict. Report the actual cause or retry after connectivity is restored.
 
-Completion criterion: `applyAllPatches` succeeds, or every reported conflict has been located in its owning generated layer.
+`applyAllPatches` must either succeed or identify every conflict in its owning generated worktree before you edit anything.
 
-## 3. Resolve Conflicts in the Owning Layer
+## 3. Resolve conflicts in the owning layer
 
-Preserve the latest upstream behavior outside the Nix intent. Keep Nix annotations tight and follow repository conventions.
+Keep current upstream behavior wherever it does not conflict with Nix changes. Keep Nix annotations tight and follow the repository conventions in `AGENTS.md`. Do not edit tracked `.patch` files directly. Make changes in the generated worktree, then rebuild the patch.
 
-### Feature-patch conflict
+### Feature-patch conflicts
 
-Resolve conflict markers in the generated worktree, stage the resolution there, and continue the interrupted patch application:
+Resolve conflict markers in the generated worktree, stage the resolved files, and continue the interrupted patch application:
 
 ```bash
 git -C <worktree> add <resolved-files>
 GIT_EDITOR=true git -C <worktree> am --continue
 ```
 
-Inspect the resulting commit and rebuild the narrow owning layer using the task listed in `AGENTS.md`. Existing patches remain existing commits; amend or continue them rather than creating correction patches.
+Inspect the resulting commit. Rebuild only its owning layer with the task listed in `AGENTS.md`. Existing patches must remain existing commits, so amend or continue them instead of adding correction patches.
 
-### Single build-file conflict
+### Single build-file conflicts
 
-Use Paperweight's partially patched file under `build/tmp/applyPaperSingleFilePatches/*/work/` as the base for the corresponding generated output (`nix-server/build.gradle.kts` or `nix-api/build.gradle.kts`). Incorporate rejected hunks against current upstream semantics, remove `.rej` artifacts, then run:
+Use the Paperweight partially patched file under `build/tmp/applyPaperSingleFilePatches/*/work/` as the base for the matching generated file, either `nix-server/build.gradle.kts` or `nix-api/build.gradle.kts`. Apply rejected hunks using current upstream semantics, remove `.rej` files, and run:
 
 ```bash
 ./gradlew rebuildPaperSingleFilePatches
 ```
 
-Keep newly unavailable upstream project dependencies as commented original lines when that retains useful upstream context, with a Nix annotation immediately above.
+When an upstream project dependency is no longer available, keep its original line as a comment if it preserves useful context. Add a Nix annotation immediately above it.
 
-Do not run broad API patch rebuilds while `paper-api` is stale or only partially materialized: Paperweight can serialize the stale tree as hundreds of unintended Nix file patches. If that occurs, remove only those newly generated untracked/staged file patches, reapply from a clean generated tree, and verify the API file-patch count returns to its prior state.
+Do not run broad API patch rebuilds while `paper-api` is stale or only partly materialized. Paperweight can serialize that stale tree as hundreds of unintended Nix file patches. If that happens, remove only the newly generated untracked or staged file patches, reapply from a clean generated tree, and confirm that the API file-patch count has returned to its previous value.
 
 Run rebuild tasks separately when Gradle reports an implicit dependency caused by combining root and nested tasks.
 
-Completion criterion: all conflicts are resolved, interrupted `git am` operations are complete, and each resolution has been serialized by its owning rebuild task.
+Before continuing, make sure every conflict is resolved, every interrupted `git am` operation is complete, and each resolution has been serialized by its owning rebuild task.
 
-## 4. Converge
+## 4. Reapply and converge
 
-Repeat `./gradlew applyAllPatches` until it succeeds. Then rebuild all durable patch layers, as separate invocations:
+Repeat the following command until it succeeds:
+
+```bash
+./gradlew applyAllPatches
+```
+
+Then rebuild all durable patch layers in separate invocations:
 
 ```bash
 ./gradlew :nix-server:rebuildAllServerPatches
 ./gradlew rebuildPaperPatches
 ```
 
-Run `./gradlew applyAllPatches` once more to prove the rebuilt artifacts reproduce cleanly.
+Run `./gradlew applyAllPatches` once more. The final apply must succeed from the rebuilt patches.
 
-Completion criterion: the final apply succeeds from the rebuilt patches.
+## 5. Audit the result
 
-## 5. Audit
-
-Inspect staged and unstaged outer diffs, including patch index/line-number churn:
+Inspect staged and unstaged changes in the outer repository, including patch index and line-number churn:
 
 ```bash
 git status --short --branch
@@ -95,20 +99,18 @@ git diff
 git diff --cached
 ```
 
-Confirm all generated worktrees are clean. Search generated trees for conflict markers and the repository for `.rej`/`.orig` files. Account for every tracked change and verify no unexpected bulk file-patch directory was created.
+Confirm that every generated worktree is clean. Search the generated trees for conflict markers and the repository for `.rej` and `.orig` files. Account for every tracked change. Make sure no unexpected bulk file-patch directory was created.
 
-Completion criterion: every outer change is intentional, no conflict artifacts remain, and all generated worktrees report clean status.
+Every remaining change must be intentional, no conflict artifacts may remain, and all generated worktrees must be clean.
 
-## 6. Commit and Push
+## 6. Commit and push
 
-Unless the user explicitly asks to leave the changes uncommitted or unpushed, stage the audited outer changes and commit them with this exact message:
+Unless the user explicitly asks to leave changes uncommitted or unpushed, stage the audited outer changes and create a commit with this exact message:
 
 ```text
 chore: sync upstream
 ```
 
-Push the current branch to its configured upstream. If the push is rejected because the remote has diverged or any conflict would require integration, stop immediately and hand control to the user; leave pull, fetch-and-rebase, merge, conflict resolution, and force-push decisions to them.
+Push the current branch to its configured upstream. If the push is rejected because the remote has diverged or integration is required, stop immediately. Do not pull, fetch and rebase, merge, resolve conflicts, or force-push. Hand those decisions to the user.
 
-After a successful push, confirm `git status --short --branch` is clean and synchronized.
-
-Completion criterion: the commit exists remotely and the outer worktree is clean, or a rejected push has been reported without attempting integration.
+After a successful push, confirm that `git status --short --branch` reports a clean, synchronized worktree.

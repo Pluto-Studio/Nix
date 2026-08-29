@@ -82,7 +82,7 @@ Paperweight rebuilds each generated worktree and its Git history from upstream a
 - For an existing patch, locate its commit and amend or fix it up. Do not add a separate correction patch.
 - For a new feature patch, create one logical commit at the correct point in that worktree's history. Do not split one change by file or combine unrelated changes.
 - Use a concise imperative subject. The subject becomes the patch subject and filename. The body becomes the patch description.
-- The body must explain what changed, how it works, the expected performance impact, and any behavior, memory, or maintenance trade-offs. If none are meaningful, say so.
+- Include a body only when necessary. When present, it should explain what changed, how it works, the expected performance impact, and any behavior or maintenance trade-offs.
 - In `nix-server/src/minecraft/java`, `base` and `file` tags mark history boundaries. Put custom source changes after those tags. They export to `nix-server/minecraft-patches/features`. Do not use per-file `sources` patches.
 
 Commits in the outer repository follow normal Git practices. These generated-worktree commit rules do not apply to unrelated outer configuration or documentation.
