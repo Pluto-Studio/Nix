@@ -33,6 +33,7 @@ import java.util.Map;
 import java.util.Objects;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponentType;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionHand;
@@ -87,6 +88,7 @@ public final class CustomItem extends Item {
         final Map<ItemHook<?, ?>, ItemHookHandler<?, ?>> hooks
     ) {
         super(properties(key, defaultComponents));
+        reapplyExplicitDefaults(key, defaultComponents);
         this.key = key.identifier().toString();
         this.vanillaMaterial = Objects.requireNonNull(vanillaMaterial, "vanillaMaterial");
         this.defaultComponents = List.copyOf(defaultComponents);
@@ -101,6 +103,16 @@ public final class CustomItem extends Item {
             properties.component((DataComponentType) component.type(), component.value());
         }
         return properties;
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static void reapplyExplicitDefaults(final ResourceKey<Item> key, final List<DefaultComponent> defaults) {
+        // Item.Properties appends generated name and model components after its explicit components.
+        BuiltInRegistries.DATA_COMPONENT_INITIALIZERS.add(key, (components, context, ignoredKey) -> {
+            for (final DefaultComponent component : defaults) {
+                components.set((DataComponentType) component.type(), component.value());
+            }
+        });
     }
 
     public String key() {
