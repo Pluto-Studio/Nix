@@ -1,11 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nostalfinals <yuu8583@proton.me>
 Date: Fri, 28 Aug 2026 00:25:36 +0800
-Subject: [PATCH] Add Content System API bridges
+Subject: [PATCH] Implement Content System
 
-Expose the Content System registry-provider factory, server service accessor, and ItemType-aware ItemStack signatures. The provider delegates to Paper's existing lifecycle implementation, and ItemStack additions keep Material compatibility while delegating to the existing ItemType and stack paths.
-
-The declarations add no new per-stack state, packet work, or hot-path processing in the API layer. Runtime behavior remains the responsibility of the server implementation. The maintenance trade-off is a deliberate Paper API dependency on Nix-owned types and a required future implementation of the new delegates, which avoids duplicating Paper registry infrastructure and preserves existing Material methods.
 
 diff --git a/src/main/java/io/papermc/paper/registry/event/RegistryEventProvider.java b/src/main/java/io/papermc/paper/registry/event/RegistryEventProvider.java
 index 727cddf418defb1188c483f2883f0718acaf541c..ca936762ef2edd20621577d244242ddcede87df2 100644

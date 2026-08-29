@@ -1,15 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: nostalfinals <yuu8583@proton.me>
 Date: Fri, 28 Aug 2026 01:23:38 +0800
-Subject: [PATCH] Add Content System server core
+Subject: [PATCH] Implement Content System
 
-Add add-only ITEM and DATA_COMPONENT_TYPE registry builders with scoped registration keys, immutable custom item definitions, custom Paper adapters, and metadata-backed persistence. Custom component values remain transient to vanilla codec and network paths while the Nix projection and recovery service carries persistent state in custom_data envelopes.
-
-Expose actual ItemType identity and configured Material compatibility through CraftBukkit, including generic custom ItemMeta handling, type-preserving conversion, copying, and similarity. Wire the server-owned Content System service and projection-aware remote slot state.
-
-Dispatch the currently available Item virtual hooks through typed Bukkit contexts with default-operation parity and result validation. Enriched overload methods are provided for the later NMS call-site patch without changing generated Minecraft sources here. Callback and modifier failures remain fail-fast by contract.
-
-Projection does a small component reconciliation for stacks with Content System projection work. Persistent component codecs and envelope copies add bounded per-serialization allocations; runtime stacks remain authoritative and custom component values are not deep-copied. The trade-off is a server-side bridge in CraftBukkit and a narrow dependency on the Nix API types, while vanilla items retain their existing behavior.
 
 diff --git a/src/main/java/io/papermc/paper/datacomponent/DataComponentAdapters.java b/src/main/java/io/papermc/paper/datacomponent/DataComponentAdapters.java
 index a775db74a4479687f0c93115b6dc62a3a44e0190..92739e639f4072d46bcb6720d4ba7c24a01483c3 100644
