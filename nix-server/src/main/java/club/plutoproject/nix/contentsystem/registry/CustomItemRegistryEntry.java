@@ -40,6 +40,7 @@ public final class CustomItemRegistryEntry {
         ItemTypeRegistryEntry.Builder {
 
         private @Nullable Material vanillaMaterial;
+        private final Conversions conversions;
         private final @Nullable Item internal;
         private boolean modified;
         private final List<CustomItem.DefaultComponent> inheritedDefaults = new ArrayList<>();
@@ -48,9 +49,10 @@ public final class CustomItemRegistryEntry {
         private final Map<ItemHook<?, ?>, ItemHookHandler<?, ?>> hooks = new LinkedHashMap<>();
 
         public PaperBuilder(
-            final Conversions ignoredConversions,
+            final Conversions conversions,
             final @Nullable Item internal
         ) {
+            this.conversions = Objects.requireNonNull(conversions, "conversions");
             this.internal = internal;
             if (internal != null) {
                 this.vanillaMaterial = CustomItem.vanillaMaterial(internal);
@@ -177,7 +179,11 @@ public final class CustomItemRegistryEntry {
                 final net.minecraft.core.component.DataComponentType<?> nmsType = PaperDataComponentType.bukkitToMinecraft(entry.getKey());
                 Object nmsValue = entry.getValue();
                 if (entry.getKey() instanceof PaperDataComponentType.ValuedImpl<?, ?> valued) {
-                    nmsValue = ((DataComponentAdapter) valued.getAdapter()).toVanilla(entry.getValue(), valued.getHolder());
+                    nmsValue = ((DataComponentAdapter) valued.getAdapter()).toVanilla(
+                        entry.getValue(),
+                        valued.getHolder(),
+                        this.conversions.lookup()
+                    );
                 }
                 convertedDefaults.put(nmsType, nmsValue);
             }

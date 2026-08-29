@@ -4,6 +4,29 @@ Date: Fri, 28 Aug 2026 01:23:38 +0800
 Subject: [PATCH] Implement Content System
 
 
+diff --git a/src/main/java/io/papermc/paper/datacomponent/DataComponentAdapter.java b/src/main/java/io/papermc/paper/datacomponent/DataComponentAdapter.java
+index 94573a05b97f99a66b238736db3156464b297dec..551fe36cd704478437ff05c21e88b31e407a88b2 100644
+--- a/src/main/java/io/papermc/paper/datacomponent/DataComponentAdapter.java
++++ b/src/main/java/io/papermc/paper/datacomponent/DataComponentAdapter.java
+@@ -27,9 +27,17 @@ public record DataComponentAdapter<NMS, API>(
+     }
+ 
+     public NMS toVanilla(final API value, final Holder<? extends DataComponentType<NMS>> type) {
++        // Nix start - support component conversion during registry composition
++        return this.toVanilla(value, type, new net.minecraft.resources.RegistryOps.HolderLookupAdapter(CraftRegistry.getMinecraftRegistry()));
++    }
++
++    public NMS toVanilla(final API value, final Holder<? extends DataComponentType<NMS>> type, final net.minecraft.resources.RegistryOps.RegistryInfoLookup lookup) {
++        // Nix end - support component conversion during registry composition
+         final NMS nms = this.apiToVanilla.apply(value);
+         if (this.codecValidation && !type.value().isTransient()) {
+-            type.value().codecOrThrow().encodeStart(CraftRegistry.getMinecraftRegistry().createSerializationContext(NullOps.INSTANCE), nms).ifError(error -> {
++            // Nix start - validate against the caller's registry context
++            type.value().codecOrThrow().encodeStart(net.minecraft.resources.RegistryOps.create(NullOps.INSTANCE, lookup), nms).ifError(error -> {
++            // Nix end - validate against the caller's registry context
+                 throw new IllegalArgumentException("Failed to encode data component %s (%s)".formatted(type.unwrapKey().orElseThrow(), error.message()));
+             });
+         }
 diff --git a/src/main/java/io/papermc/paper/datacomponent/DataComponentAdapters.java b/src/main/java/io/papermc/paper/datacomponent/DataComponentAdapters.java
 index a775db74a4479687f0c93115b6dc62a3a44e0190..92739e639f4072d46bcb6720d4ba7c24a01483c3 100644
 --- a/src/main/java/io/papermc/paper/datacomponent/DataComponentAdapters.java

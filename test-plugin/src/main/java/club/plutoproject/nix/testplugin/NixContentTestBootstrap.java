@@ -76,6 +76,7 @@ public final class NixContentTestBootstrap implements PluginBootstrap {
                 event.registry().register(TestContent.TRANSFORMER_KEY, builder -> builder
                     .vanillaMaterial(Material.FEATHER)
                     .component(DataComponentTypes.CUSTOM_NAME, Component.text("Right-click: transform into diamond", NamedTextColor.YELLOW))
+                    .component(DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE, true)
                     .addHook(ItemHooks.ON_USE, use -> {
                         use.player().sendMessage(PREFIX.append(Component.text("ON_USE returned a transformed stack")));
                         return ItemUseResult.success(ItemStack.of(Material.DIAMOND));
