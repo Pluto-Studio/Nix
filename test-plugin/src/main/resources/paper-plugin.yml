@@ -1,0 +1,12 @@
+name: NixContentSystemTest
+version: 1.0.0
+main: club.plutoproject.nix.testplugin.NixContentTestPlugin
+bootstrapper: club.plutoproject.nix.testplugin.NixContentTestBootstrap
+api-version: '26.2'
+description: Manual integration tests for the Nix Content System
+authors:
+  - Nix
+permissions:
+  nix.content-test:
+    description: Allows use of the Nix Content System test command
+    default: op
