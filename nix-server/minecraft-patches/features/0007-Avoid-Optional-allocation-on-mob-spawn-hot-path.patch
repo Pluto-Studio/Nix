@@ -5,7 +5,7 @@ Subject: [PATCH] Avoid Optional allocation on mob spawn hot path
 
 
 diff --git a/net/minecraft/util/random/WeightedList.java b/net/minecraft/util/random/WeightedList.java
-index a8481259e42aa116e29bccd1e30fdfd91f51a8cc..a910923b3650360cd138c4d6604f21fa24414620 100644
+index 99ed1908e6396f73ce2c80e48cd7ac454de29e04..09d4020c24a2388991dee8ef4cbab03722f8fba7 100644
 --- a/net/minecraft/util/random/WeightedList.java
 +++ b/net/minecraft/util/random/WeightedList.java
 @@ -82,6 +82,17 @@ public class WeightedList<E> { // Paper - non-final
@@ -27,10 +27,10 @@ index a8481259e42aa116e29bccd1e30fdfd91f51a8cc..a910923b3650360cd138c4d6604f21fa
          if (this.selector == null) {
              throw new IllegalStateException("Weighted list has no elements");
 diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
-index 979727a20d6bfdcbfa72b2e66e37274869543e52..d60b2991a5e93c60661b136ccf57f226e80fd88b 100644
+index c673501e04c053de141848d22bdfad508b5acecc..1a27e435b2d1305f9dc06a463c77d74a21f2025d 100644
 --- a/net/minecraft/world/level/NaturalSpawner.java
 +++ b/net/minecraft/world/level/NaturalSpawner.java
-@@ -291,14 +291,16 @@ public final class NaturalSpawner {
+@@ -285,14 +285,16 @@ public final class NaturalSpawner {
                          double nearestPlayerDistanceSqr = nearestPlayer.distanceToSqr(xx, yStart, zz);
                          if (level.isLoadedAndInBounds(pos) && isRightDistanceToPlayerAndSpawnPoint(level, chunk, pos, nearestPlayerDistanceSqr)) { // Paper - don't load chunks for mob spawn
                              if (currentSpawnData == null) {
@@ -47,11 +47,11 @@ index 979727a20d6bfdcbfa72b2e66e37274869543e52..d60b2991a5e93c60661b136ccf57f226
 -                                currentSpawnData = nextSpawnData.get();
 +                                currentSpawnData = nextSpawnData;
 +                                // Nix end - Avoid Optional allocation on mob spawn hot path
-                                 max = currentSpawnData.minCount() + level.random.nextInt(1 + currentSpawnData.maxCount() - currentSpawnData.minCount());
+                                 max = currentSpawnData.count().sample(level.random);
                              }
  
-@@ -458,6 +460,22 @@ public final class NaturalSpawner {
-             : mobsAt(level, structureManager, generator, mobCategory, pos, biome).getRandom(random);
+@@ -452,6 +454,22 @@ public final class NaturalSpawner {
+             : mobsAt(level, structureManager, generator, mobCategory, pos).getRandom(random);
      }
  
 +    // Nix start - Avoid Optional allocation on mob spawn hot path
@@ -66,7 +66,7 @@ index 979727a20d6bfdcbfa72b2e66e37274869543e52..d60b2991a5e93c60661b136ccf57f226
 +        Holder<Biome> biome = level.getBiome(pos);
 +        return mobCategory == MobCategory.WATER_AMBIENT && biome.is(BiomeTags.REDUCED_WATER_AMBIENT_SPAWNS) && random.nextFloat() < 0.98F
 +                ? null
-+                : mobsAt(level, structureManager, generator, mobCategory, pos, biome).getRandomOrNull(random);
++                : mobsAt(level, structureManager, generator, mobCategory, pos).getRandomOrNull(random);
 +    }
 +    // Nix end - Avoid Optional allocation on mob spawn hot path
 +

@@ -10,20 +10,18 @@ This is not strictly behaviourally equivalent, since the old code would continue
 but the actual spawn override decision only depends on whether any matching start exists, so the selected mob list remains unchanged while avoiding unnecessary chunk work on this hot path.
 
 diff --git a/net/minecraft/world/level/StructureManager.java b/net/minecraft/world/level/StructureManager.java
-index a8f00da4d5c7cca9b6948d7c2d5114f84fdacc00..df0d8083c5b6477ff3b3f170ebed78330a84ce21 100644
+index e355f7c04aefed172776edfccc584f112808e3d7..ef9b7de501962a0dba6e6361e251ab6b5e7ea74f 100644
 --- a/net/minecraft/world/level/StructureManager.java
 +++ b/net/minecraft/world/level/StructureManager.java
-@@ -86,6 +86,21 @@ public class StructureManager {
+@@ -84,6 +84,19 @@ public class StructureManager {
          }
      }
  
 +    // Nix start - Avoid full structure start scan for spawn overrides
 +    public boolean anyStartForStructureMatches(final Structure structure, final LongSet referencesForStructure, final Predicate<StructureStart> condition) {
 +        for (long key : referencesForStructure) {
-+            SectionPos sectionPos = SectionPos.of(ChunkPos.unpack(key), this.level.getMinSectionY());
-+            StructureStart start = this.getStartForStructure(
-+                    sectionPos, structure, this.level.getChunk(sectionPos.x(), sectionPos.z(), ChunkStatus.STRUCTURE_STARTS)
-+            );
++            ChunkPos chunkPos = ChunkPos.unpack(key);
++            StructureStart start = this.getStartForStructure(structure, this.level.getChunk(chunkPos.x(), chunkPos.z(), ChunkStatus.STRUCTURE_STARTS));
 +            if (start != null && start.isValid() && condition.test(start)) {
 +                return true;
 +            }
@@ -32,14 +30,14 @@ index a8f00da4d5c7cca9b6948d7c2d5114f84fdacc00..df0d8083c5b6477ff3b3f170ebed7833
 +    }
 +    // Nix end - Avoid full structure start scan for spawn overrides
 +
-     public @Nullable StructureStart getStartForStructure(final SectionPos pos, final Structure structure, final StructureAccess chunk) {
+     public @Nullable StructureStart getStartForStructure(final Structure structure, final StructureAccess chunk) {
          return chunk.getStartForStructure(structure);
      }
 diff --git a/net/minecraft/world/level/chunk/ChunkGenerator.java b/net/minecraft/world/level/chunk/ChunkGenerator.java
-index 1624d73d63a848b1eced1964193f14f7ab9c1bc2..8f168a5a344e273017030c00d7e2e5d87845cc47 100644
+index cc4800823c20e8ecbf0b4d74fd85a22bcb70c74c..fe6c0b2a076665cd7027d23f6448834a884aa7f4 100644
 --- a/net/minecraft/world/level/chunk/ChunkGenerator.java
 +++ b/net/minecraft/world/level/chunk/ChunkGenerator.java
-@@ -511,18 +511,14 @@ public abstract class ChunkGenerator {
+@@ -560,18 +560,14 @@ public abstract class ChunkGenerator {
              Structure structure = entry.getKey();
              StructureSpawnOverride override = structure.spawnOverrides().get(mobCategory);
              if (override != null) {
